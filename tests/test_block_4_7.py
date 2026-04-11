@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from app.api.routes_integrations import (
     agent_link_report_error,
+    agent_link_install_report,
     agent_link_presence,
     agent_link_prompt,
     agent_link_self_register,
@@ -31,11 +32,13 @@ from app.api.routes_integrations import (
     resolve_approval,
     subscribe_task,
 )
+from app.core.db import Base
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token
 from app.main import custom_swagger_docs
 from app.schemas.integration import (
     AgentLinkErrorReportRequest,
+    AgentLinkInstallReportRequest,
     AgentLinkPresenceRequest,
     AgentLinkSelfRegisterRequest,
     OpenClawAgentRegisterRequest,
@@ -92,6 +95,10 @@ class FakeWebSocket:
 
 class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
     """覆盖版块 4-7 的核心能力回归测试。"""
+
+    async def test_init_metadata_includes_agent_link_error_events_table(self):
+        """db-init 使用 Base.metadata.create_all 时必须包含错误事件表。"""
+        self.assertIn("agent_link_error_events", Base.metadata.tables)
 
     async def test_delivery_success_marks_delivered(self):
         """投递成功后应进入 DELIVERED。"""
@@ -884,9 +891,37 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不是普通网页阅读任务", body)
         self.assertIn("AGENT_ID=<local-agent-id>", body)
         self.assertIn("当前会话可能短暂中断或显示 SIGTERM", body)
-        self.assertIn("status=online", body)
+        self.assertIn(".agent-link/install-result.json", body)
+        self.assertIn("无法访问宿主机", body)
         self.assertIn("不要泄露 auth_token", body)
         self.assertIn("https://hub.example.com/agent-link/connect", body)
+
+    async def test_agent_link_install_report_records_public_result(self):
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/v1/agent-link/install-report"),
+            headers={},
+            method="POST",
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        req = AgentLinkInstallReportRequest(
+            agent_id="ava",
+            status="success",
+            stage="install_online",
+            summary="Agent Link 安装完成，插件已在线",
+            owner_profile={"name": "Ava Owner"},
+            metadata={"local_agent_id": "ava"},
+        )
+
+        with patch("app.api.routes_integrations.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
+            response = await agent_link_install_report(req=req, request=request)
+
+        self.assertTrue(response.data["recorded"])
+        self.assertEqual(response.data["agent_id"], "openclaw:ava")
+        self.assertEqual(response.data["status"], "success")
+        record_mock.assert_awaited_once()
+        payload = record_mock.await_args.kwargs["payload"]
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["local_agent_id"], "ava")
 
     async def test_agent_link_manifest_includes_plugin_install_urls(self):
         """公开 manifest 应明确告诉 agent 插件下载和安装脚本地址。"""
@@ -916,13 +951,18 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
 
         body = response.body.decode("utf-8")
         self.assertIn("channels.dbim_mqtt", body)
+        self.assertIn("instances", body)
         self.assertIn("plugins.allow", body)
         self.assertIn("无法安全推断 AGENT_ID", body)
         self.assertIn("已备份已有 dbim-mqtt 插件目录", body)
         self.assertIn("npm install --omit=dev", body)
         self.assertIn('chmod -R u=rwX,go=rX "$PLUGIN_DIR"', body)
         self.assertIn("异步重启", body)
-        self.assertIn("nohup sh -c 'sleep 2; systemctl --user restart openclaw-gateway.service'", body)
+        self.assertIn("install-result.json", body)
+        self.assertIn("/v1/agent-link/install-report", body)
+        self.assertIn('const instanceDir = path.join(channelDir, shortAgentId);', body)
+        self.assertIn('stateFile: path.join(instanceDir, "state.json")', body)
+        self.assertIn("nohup env", body)
 
     async def test_dbim_mqtt_plugin_package_can_be_downloaded(self):
         """插件包下载接口应返回可解压的 dbim-mqtt 插件源码。"""

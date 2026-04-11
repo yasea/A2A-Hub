@@ -1,23 +1,23 @@
 # OpenClaw Agent Link 兼容接入指令
 
-这是兼容一次性 token 的旧入口说明。当前推荐 agent 优先读取公开入口：
+这是兼容 token 化入口的说明页，只用于已经拿到旧链接的场景。当前推荐 agent 优先读取公开入口：
 
 ```text
 /agent-link/connect
 ```
 
-如果当前 URL 带有 token，可以继续按本页完成 bootstrap。
+如果当前 URL 带有 token，可以继续按本页完成 bootstrap；但新接入请直接改用 `/agent-link/prompt` 或 `/agent-link/connect`。
 
-## 当前入口
+## 兼容入口
 
-- Onboarding URL: `{{ONBOARDING_URL}}`
+- Token 化入口: `{{ONBOARDING_URL}}`
 - Bootstrap JSON: `{{BOOTSTRAP_URL}}`
 - WebSocket Gateway: `{{WS_URL}}`（兼容通道）
 - Register API: `{{REGISTER_URL}}`（兼容旧流程）
 - Transcript Webhook: `{{TRANSCRIPT_WEBHOOK_URL}}`
 - Approval Webhook: `{{APPROVAL_WEBHOOK_URL}}`
 
-## 执行步骤
+## 兼容步骤
 
 1. 请求 `{{BOOTSTRAP_URL}}`。
 2. 从响应读取 `auth_token`、`mqtt_broker_url`、`mqtt_command_topic`、`mqtt_username`、`mqtt_password`、`presence_url`。
@@ -65,6 +65,6 @@ Content-Type: application/json
 }
 ```
 
-## 最新完整文档
+## 当前主文档
 
 [docs/agent-link-mqtt.md](../../../docs/agent-link-mqtt.md)

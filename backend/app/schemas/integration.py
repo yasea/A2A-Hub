@@ -210,6 +210,16 @@ class AgentLinkErrorReportRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentLinkInstallReportRequest(BaseModel):
+    agent_id: str
+    status: str
+    stage: str
+    summary: str
+    detail: str | None = None
+    owner_profile: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentLinkErrorEventResponse(BaseModel):
     error_id: int
     tenant_id: str | None = None

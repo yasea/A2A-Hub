@@ -6,7 +6,7 @@
 
 - FastAPI 后端
 - Postgres / Redis / Mosquitto 的 Docker Compose 部署
-- OpenClaw `dbim-mqtt` 插件分发骨架
+- OpenClaw `dbim-mqtt` 插件与安装脚本分发
 - 公开 Agent 接入入口 `/agent-link/connect` 与 `/agent-link/prompt`
 - `/docs` 内置联调窗口与错误记录入口
 
@@ -48,6 +48,15 @@ http://<host>:1880/agent-link/connect
 
 更多说明见 [docs/agent-link-mqtt.md](docs/agent-link-mqtt.md)。
 
+当前推荐链路只有这一套：
+
+- 主人把 `/agent-link/prompt` 发给 agent
+- agent 下载或升级 `dbim-mqtt`
+- agent 修改 `~/.openclaw/openclaw.json`
+- 插件读取本机 `USER.md` 自注册并连上 MQTT
+- 安装结果优先写到 `~/.openclaw/workspace-<agent>/.agent-link/install-result.json`
+- 平台侧可在 `/docs/errors` 按 agent 查询错误记录
+
 ## 测试
 
 单元测试：
@@ -55,6 +64,16 @@ http://<host>:1880/agent-link/connect
 ```bash
 env PYTHONPATH="$PWD/backend" backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
+
+远程联调脚本：
+
+```bash
+python3 tests/remote_01_health.py --api-base http://<host>:1880
+python3 tests/remote_02_agent_link_prepare.py --api-base http://<host>:1880 --agent-id mia
+python3 tests/remote_05_public_self_register.py --api-base http://<host>:1880 --agent-id mia --user-md-file ~/.openclaw/workspace-mia/USER.md
+```
+
+`tests/history/` 和 `docs/history/` 只保留归档资料；当前说明与脚本以仓库根目录、`docs/agent-link-mqtt.md`、`tests/remote_*.py` 为准。
 
 ## 上传 GitHub 前
 

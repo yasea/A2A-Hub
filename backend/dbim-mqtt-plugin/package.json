@@ -1,8 +1,19 @@
 {
   "name": "dbim-mqtt",
-  "version": "0.3.2",
-  "description": "A2A Hub Agent Link core embedded in an OpenClaw MQTT channel plugin.",
+  "version": "0.4.0",
+  "description": "DBIM MQTT channel plugin with embedded Agent Link Core",
   "main": "index.js",
   "type": "commonjs",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.14.1"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
 }

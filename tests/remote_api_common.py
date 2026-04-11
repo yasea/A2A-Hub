@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import ssl
 import time
 import uuid
@@ -17,7 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-默认平台地址 = "http://172.16.110.241:1880"
+默认平台地址 = os.environ.get("API_BASE", "http://127.0.0.1:1880")
 默认租户 = "tenant_001"
 默认签发密钥 = "241-issuer-secret"
 
@@ -227,39 +228,32 @@ def 读取任务消息(client: ApiClient, task_id: str) -> list[dict[str, Any]]:
     return client.get(f"/v1/tasks/{task_id}/messages")["data"]
 
 
-def 生成接入链接(
+def 读取公开清单(client: ApiClient) -> dict[str, Any]:
+    """读取公开 Agent Link manifest。"""
+    return client.get("/v1/agent-link/manifest")["data"]
+
+
+def 公开自注册(
     client: ApiClient,
     agent_id: str,
     display_name: str,
-    workspace_name: str,
+    local_agent_id: str,
+    owner_profile: dict[str, Any],
 ) -> dict[str, Any]:
-    """生成 connect_url，并返回平台响应 data。"""
+    """通过公开入口完成 Agent Link 自注册，并返回响应 data。"""
+    normalized_agent_id = agent_id if ":" in agent_id else f"openclaw:{agent_id}"
     resp = client.post(
-        f"/v1/openclaw/agents/{agent_id}/connect-link",
+        "/v1/agent-link/self-register",
         {
+            "agent_id": normalized_agent_id,
             "display_name": display_name,
             "capabilities": {"analysis": True, "generic": True},
-            "config_json": {"workspace": workspace_name},
+            "config_json": {
+                "workspace": local_agent_id,
+                "local_agent_id": local_agent_id,
+            },
+            "owner_profile": owner_profile,
         },
     )
     return resp["data"]
 
-
-def 读取Bootstrap(api_base: str, bootstrap_url: str, verify_tls: bool = False) -> dict[str, Any]:
-    """读取 bootstrap 配置；返回内容里包含 agent auth_token、MQTT broker/topic 等。"""
-    client = ApiClient(api_base, verify_tls=verify_tls)
-    url = bootstrap_url
-    if bootstrap_url.startswith(client.base_url):
-        path = bootstrap_url[len(client.base_url):]
-        return client.get(path)["data"]
-
-    req = Request(url, headers={"Accept": "application/json"}, method="GET")
-    try:
-        with urlopen(req, timeout=30, context=client.ssl_context) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise ApiError("GET", url, exc.code, raw) from exc
-    if data.get("error"):
-        raise ApiError("GET", url, None, json.dumps(data["error"], ensure_ascii=False))
-    return data["data"]

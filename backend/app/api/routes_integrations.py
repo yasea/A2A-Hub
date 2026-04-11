@@ -27,6 +27,7 @@ from app.schemas.integration import (
     AgentLinkManifestResponse,
     AgentLinkErrorEventResponse,
     AgentLinkErrorReportRequest,
+    AgentLinkInstallReportRequest,
     AgentLinkSendMessageRequest,
     AgentLinkMessageRequest,
     AgentLinkPresenceRequest,
@@ -96,6 +97,7 @@ def _openclaw_urls(request: Request | None = None) -> dict[str, str]:
         "plugin_download_url": f"{base_url}/agent-link/plugins/dbim-mqtt.tar.gz",
         "openclaw_install_script_url": f"{base_url}/agent-link/install/openclaw-dbim-mqtt.sh",
         "agent_prompt_url": f"{base_url}/agent-link/prompt",
+        "install_report_url": f"{base_url}/v1/agent-link/install-report",
         "presence_url": f"{base_url}/v1/agent-link/presence",
         "transcript_webhook_url": f"{base_url}/v1/openclaw/events/transcript",
         "approval_webhook_url": f"{base_url}/v1/openclaw/events/approval",
@@ -599,6 +601,51 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
         raise
 
 
+@router.post(
+    "/v1/agent-link/install-report",
+    response_model=ApiResponse[dict],
+    summary="公开安装结果上报",
+    description="安装脚本后台检查器匿名调用。用于把安装成功或失败结果回传到平台观测链路，适配沙盒 agent 无法直接读取宿主机状态文件或 systemd 日志的场景。",
+)
+async def agent_link_install_report(req: AgentLinkInstallReportRequest, request: Request):
+    agent_id = _normalize_openclaw_agent_id(req.agent_id)
+    owner_profile = {
+        **req.owner_profile,
+        "report_model": "install_result",
+    }
+    requested_tenant_id = _owner_tenant_id(owner_profile)
+
+    async with AsyncSessionLocal() as db:
+        existing_result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+        existing_agent = existing_result.scalar_one_or_none()
+        tenant_id = existing_agent.tenant_id if existing_agent else requested_tenant_id
+
+    await _record_error_event(
+        source_side="agent",
+        stage=req.stage,
+        category="install",
+        summary=req.summary,
+        request=request,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        detail=req.detail,
+        payload={
+            "status": req.status,
+            "owner_profile_key": _owner_profile_key(owner_profile),
+            **req.metadata,
+        },
+    )
+    return ApiResponse.ok(
+        {
+            "recorded": True,
+            "tenant_id": tenant_id,
+            "agent_id": agent_id,
+            "status": req.status,
+            "stage": req.stage,
+        }
+    )
+
+
 @router.get(
     "/v1/openclaw/agents/bootstrap",
     response_model=ApiResponse[OpenClawAgentRegistrationResponse],
@@ -1093,9 +1140,9 @@ def _agent_link_connect_markdown(request: Request) -> str:
 ## 你要完成的结果
 
 1. 安装或升级 `dbim-mqtt` 插件。
-2. 启用 `channels.dbim_mqtt`。
+2. 启用 `channels.dbim_mqtt`，必要时在同一个网关里追加多个 agent 实例。
 3. 读取本机 `USER.md` 自注册。
-4. 连上 MQTT 并让 `state.json` 变成 `online`。
+4. 连上 MQTT 并让对应 agent 的 `state.json` 变成 `online`。
 5. 把安装结果和错误摘要回给主人。
 
 ## 平台地址
@@ -1117,7 +1164,7 @@ presence_url={urls["presence_url"]}
 4. 不要把 `auth_token`、MQTT password 或完整 bootstrap 响应发到公开聊天窗口。
 5. 如果安装命令触发 OpenClaw Gateway 重启，当前对话可能中断；重启后继续执行“安装后检查”，不要让主人重新分析问题。
 6. 如果出现连接失败、401、500、无法回复等问题，优先给主人回报“失败阶段 + 错误摘要 + 最近相关日志”。
-7. 最后必须给主人报告：插件版本、Gateway 是否运行、`state.json` 是否 online、agentId、tenantId、MQTT topic，以及是否已完成一次平台消息测试。
+7. 最后必须给主人报告：插件版本、Gateway 是否运行、对应 agent 的 `state.json` 是否 online、agentId、tenantId、MQTT topic，以及是否已完成一次平台消息测试。
 
 ## 推荐自动安装
 
@@ -1137,7 +1184,7 @@ curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 2. 如果本地已有 `dbim-mqtt`，先备份旧目录，再安装平台提供的新版本。
 3. 执行 `npm install --omit=dev`。
 4. 备份并更新 `~/.openclaw/openclaw.json`。
-5. 写入 `channels.dbim_mqtt.connectUrl`。
+5. 在 `channels.dbim_mqtt.instances` 中新增或更新当前 agent 实例。
 6. 异步延迟重启 `openclaw-gateway.service`；如果没有 systemd user service，会提示手动重启。
 
 如果你看到 `channels.dbim_mqtt: unknown channel id: dbim_mqtt`，说明本机 OpenClaw 还没有识别到带 `dbim_mqtt` channel 声明的插件 manifest，或配置先于插件安装生效。也要检查日志里是否有 `world-writable path`，这种情况下 OpenClaw 会出于安全原因阻止加载插件。重新执行上面的自动安装脚本；脚本会先安装新插件包、修正插件目录权限，再写入 `channels.dbim_mqtt` 配置。
@@ -1155,7 +1202,7 @@ npm install --omit=dev
 chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
 ```
 
-然后在 `~/.openclaw/openclaw.json` 中启用：
+然后在 `~/.openclaw/openclaw.json` 中启用。单 agent 可继续写顶层字段；如果同一个 OpenClaw Gateway 里要接多个 agent，推荐使用 `instances`：
 
 ```json
 {{
@@ -1173,12 +1220,17 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
   "channels": {{
     "dbim_mqtt": {{
       "enabled": true,
-      "agentId": "<local-agent-id>",
-      "connectUrl": "{urls["public_connect_url"]}",
-      "userProfileFile": "~/.openclaw/workspace-<local-agent-id>/USER.md",
-      "stateFile": "~/.openclaw/channels/dbim_mqtt/state.json",
       "replyMode": "openclaw-agent",
-      "recordOpenClawSession": true
+      "recordOpenClawSession": true,
+      "instances": [
+        {{
+          "localAgentId": "<local-agent-id>",
+          "agentId": "<local-agent-id>",
+          "connectUrl": "{urls["public_connect_url"]}",
+          "userProfileFile": "~/.openclaw/workspace-<local-agent-id>/USER.md",
+          "stateFile": "~/.openclaw/channels/dbim_mqtt/<local-agent-id>/state.json"
+        }}
+      ]
     }}
   }}
 }}
@@ -1205,36 +1257,33 @@ Content-Type: application/json
 
 ## 安装后检查
 
-安装并重启 OpenClaw Gateway 后，检查：
+安装并重启 OpenClaw Gateway 后，优先检查 workspace 结果镜像：
 
 ```bash
-systemctl --user is-active openclaw-gateway.service || true
-node -e 'const p=require(process.env.HOME+"/.openclaw/plugins/dbim-mqtt/package.json"); console.log(p.version)'
-cat ~/.openclaw/channels/dbim_mqtt/state.json
-journalctl --user -u openclaw-gateway.service --since "10 minutes ago" --no-pager | grep -E "dbim-mqtt|unknown channel|world-writable|self-register|mqtt connected" | tail -n 50
+cat ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
 ```
 
 期望看到：
 
 ```json
-{{"status":"online","agentId":"openclaw:<local-agent-id>","tenantId":"owner_xxx"}}
+{{"status":"success","state":{{"status":"online","agentId":"openclaw:<local-agent-id>","tenantId":"owner_xxx"}}}}
 ```
 
-如果 `state.json` 显示 `status=online`，并且日志有 `dbim-mqtt: mqtt connected`，说明接入完成。请给主人回复：
+如果 `install-result.json` 显示成功或其中 `state.status=online`，说明当前 agent 接入完成。请给主人回复：
 
 ```text
 Agent Link 安装完成。
 - 本机 agent id: <local-agent-id>
 - 平台 agent id: openclaw:<local-agent-id>
 - 插件版本: <version>
-- Gateway: active
 - Agent Link 状态: online
 - tenantId: <tenantId>
 - MQTT topic: <topic>
+- 结果文件: ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
 - 备注: 如果你希望我继续，我可以等待平台测试消息并回复。
 ```
 
-如果状态不是 online，请只回失败阶段、错误摘要和最近 50 行相关日志，不要泄露 token 或 MQTT password。
+如果结果文件显示失败或超时，请只回失败阶段、错误摘要和 detail 内容；不要泄露 token 或 MQTT password。只有当你明确具备宿主机权限时，才再补充检查 `state.json` 或 `journalctl`。
 
 ## 收到平台任务后的行为
 
@@ -1255,30 +1304,31 @@ Agent Link 安装完成。
 
 def _build_openclaw_install_script(request: Request) -> str:
     urls = _openclaw_urls(request)
-    return f"""#!/usr/bin/env bash
+    script = """#!/usr/bin/env bash
 set -euo pipefail
 
 # 这个脚本面向 OpenClaw agent 自动安装 A2A Hub 的 dbim-mqtt 插件。
 # 可配置环境变量：
 #   AGENT_ID=<local-agent-id>
-#   CONNECT_URL={urls["public_connect_url"]}
+#   CONNECT_URL=__PUBLIC_CONNECT_URL__
 #   OPENCLAW_CONFIG=~/.openclaw/openclaw.json
 
-CONNECT_URL="${{CONNECT_URL:-{urls["public_connect_url"]}}}"
-OPENCLAW_HOME="${{OPENCLAW_HOME:-$HOME/.openclaw}}"
-OPENCLAW_CONFIG="${{OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}}"
+CONNECT_URL="${CONNECT_URL:-__PUBLIC_CONNECT_URL__}"
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"
 PLUGIN_DIR="$OPENCLAW_HOME/plugins/dbim-mqtt"
 CHANNEL_DIR="$OPENCLAW_HOME/channels/dbim_mqtt"
-PLUGIN_URL="{urls["plugin_download_url"]}"
+PLUGIN_URL="__PLUGIN_DOWNLOAD_URL__"
+INSTALL_REPORT_URL="__INSTALL_REPORT_URL__"
 
-AGENT_ID="${{AGENT_ID:-${{OPENCLAW_AGENT_ID:-}}}}"
+AGENT_ID="${AGENT_ID:-${OPENCLAW_AGENT_ID:-}}"
 if [ -z "$AGENT_ID" ]; then
   candidate_count=0
   candidate_agent=""
   for user_md in "$OPENCLAW_HOME"/workspace-*/USER.md; do
     [ -f "$user_md" ] || continue
     workspace_name="$(basename "$(dirname "$user_md")")"
-    local_id="${{workspace_name#workspace-}}"
+    local_id="${workspace_name#workspace-}"
     if [ "$local_id" != "main" ]; then
       candidate_count=$((candidate_count + 1))
       candidate_agent="$local_id"
@@ -1294,7 +1344,7 @@ if [ -z "$AGENT_ID" ]; then
 fi
 
 if printf '%s' "$AGENT_ID" | grep -q ':'; then
-  AGENT_ID="${{AGENT_ID##*:}}"
+  AGENT_ID="${AGENT_ID##*:}"
   echo "已将平台 agent id 转换为本机短 id：$AGENT_ID"
 fi
 
@@ -1308,7 +1358,79 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$OPENCLAW_HOME/plugins" "$CHANNEL_DIR"
+INSTANCE_DIR="$CHANNEL_DIR/$AGENT_ID"
+WORKSPACE_DIR="$OPENCLAW_HOME/workspace-$AGENT_ID"
+WORKSPACE_REPORT_DIR="$WORKSPACE_DIR/.agent-link"
+WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_DIR/install-result.json"
+HOST_REPORT_FILE="$INSTANCE_DIR/install-result.json"
+USER_MD_FILE="$WORKSPACE_DIR/USER.md"
+
+mkdir -p "$OPENCLAW_HOME/plugins" "$CHANNEL_DIR" "$INSTANCE_DIR" "$WORKSPACE_REPORT_DIR"
+
+write_install_result() {
+  RESULT_STATUS="$1" RESULT_STAGE="$2" RESULT_SUMMARY="$3" RESULT_DETAIL="${4:-}" \
+  AGENT_ID="$AGENT_ID" CONNECT_URL="$CONNECT_URL" WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_FILE" HOST_REPORT_FILE="$HOST_REPORT_FILE" USER_MD_FILE="$USER_MD_FILE" INSTANCE_DIR="$INSTANCE_DIR" \
+  node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const statePath = path.join(process.env.INSTANCE_DIR || "", "state.json");
+let state = null;
+try {
+  if (fs.existsSync(statePath)) state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+} catch {}
+const payload = {
+  status: process.env.RESULT_STATUS,
+  stage: process.env.RESULT_STAGE,
+  summary: process.env.RESULT_SUMMARY,
+  detail: process.env.RESULT_DETAIL || null,
+  localAgentId: process.env.AGENT_ID,
+  connectUrl: process.env.CONNECT_URL,
+  state,
+  userProfileFile: process.env.USER_MD_FILE,
+  updatedAt: new Date().toISOString(),
+};
+for (const file of [process.env.WORKSPACE_REPORT_FILE, process.env.HOST_REPORT_FILE]) {
+  if (!file) continue;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\\n", "utf8");
+}
+NODE
+}
+
+report_install_result() {
+  RESULT_STATUS="$1" RESULT_STAGE="$2" RESULT_SUMMARY="$3" RESULT_DETAIL="${4:-}" \
+  AGENT_ID="$AGENT_ID" CONNECT_URL="$CONNECT_URL" WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_FILE" HOST_REPORT_FILE="$HOST_REPORT_FILE" USER_MD_FILE="$USER_MD_FILE" INSTANCE_DIR="$INSTANCE_DIR" INSTALL_REPORT_URL="$INSTALL_REPORT_URL" \
+  node <<'NODE' | curl -fsS -m 10 -X POST "$INSTALL_REPORT_URL" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true
+const fs = require("node:fs");
+const path = require("node:path");
+const statePath = path.join(process.env.INSTANCE_DIR || "", "state.json");
+let state = null;
+try {
+  if (fs.existsSync(statePath)) state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+} catch {}
+let rawText = "";
+try {
+  if (process.env.USER_MD_FILE && fs.existsSync(process.env.USER_MD_FILE)) rawText = fs.readFileSync(process.env.USER_MD_FILE, "utf8");
+} catch {}
+process.stdout.write(JSON.stringify({
+  agent_id: process.env.AGENT_ID,
+  status: process.env.RESULT_STATUS,
+  stage: process.env.RESULT_STAGE,
+  summary: process.env.RESULT_SUMMARY,
+  detail: process.env.RESULT_DETAIL || null,
+  owner_profile: rawText ? { source: "openclaw-user-md", raw_text: rawText } : {},
+  metadata: {
+    local_agent_id: process.env.AGENT_ID,
+    connect_url: process.env.CONNECT_URL,
+    workspace_report_file: process.env.WORKSPACE_REPORT_FILE,
+    host_report_file: process.env.HOST_REPORT_FILE,
+    state,
+  },
+}));
+NODE
+}
+
+write_install_result "running" "install_start" "开始安装 dbim-mqtt"
 tmp_tar="$(mktemp /tmp/dbim-mqtt.XXXXXX.tar.gz)"
 install_tmp="$(mktemp -d "$OPENCLAW_HOME/plugins/.dbim-mqtt.new.XXXXXX")"
 trap 'rm -f "$tmp_tar"; rm -rf "$install_tmp"' EXIT
@@ -1332,74 +1454,187 @@ mkdir -p "$(dirname "$OPENCLAW_CONFIG")"
 if [ -f "$OPENCLAW_CONFIG" ]; then
   cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%Y%m%d%H%M%S)"
 else
-  printf '{{}}\\n' > "$OPENCLAW_CONFIG"
+  printf '{}\\n' > "$OPENCLAW_CONFIG"
 fi
 
 export AGENT_ID CONNECT_URL OPENCLAW_CONFIG PLUGIN_DIR CHANNEL_DIR
 node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
-
 const configPath = process.env.OPENCLAW_CONFIG;
 const pluginDir = process.env.PLUGIN_DIR;
 const channelDir = process.env.CHANNEL_DIR;
 const agentId = process.env.AGENT_ID;
+const shortAgentId = String(agentId).split(":").pop();
 const connectUrl = process.env.CONNECT_URL;
 if (!agentId) throw new Error("AGENT_ID 不能为空");
 
-function readJson(file) {{
-  try {{
+function readJson(file) {
+  try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
-  }} catch (err) {{
-    throw new Error(`无法解析 ${{file}}：${{err.message}}`);
-  }}
-}}
+  } catch (err) {
+    throw new Error(`无法解析 ${file}：${err.message}`);
+  }
+}
 
-function uniqAppend(list, value) {{
+function uniqAppend(list, value) {
   const next = Array.isArray(list) ? list.slice() : [];
   if (!next.includes(value)) next.push(value);
   return next;
-}}
+}
 
 const cfg = readJson(configPath);
-cfg.plugins = cfg.plugins && typeof cfg.plugins === "object" ? cfg.plugins : {{}};
+cfg.plugins = cfg.plugins && typeof cfg.plugins === "object" ? cfg.plugins : {};
 cfg.plugins.allow = uniqAppend(cfg.plugins.allow, "dbim-mqtt");
-cfg.plugins.load = cfg.plugins.load && typeof cfg.plugins.load === "object" ? cfg.plugins.load : {{}};
+cfg.plugins.load = cfg.plugins.load && typeof cfg.plugins.load === "object" ? cfg.plugins.load : {};
 cfg.plugins.load.paths = uniqAppend(cfg.plugins.load.paths, pluginDir);
-cfg.plugins.entries = cfg.plugins.entries && typeof cfg.plugins.entries === "object" ? cfg.plugins.entries : {{}};
-cfg.plugins.entries["dbim-mqtt"] = {{
-  ...(cfg.plugins.entries["dbim-mqtt"] || {{}}),
+cfg.plugins.entries = cfg.plugins.entries && typeof cfg.plugins.entries === "object" ? cfg.plugins.entries : {};
+cfg.plugins.entries["dbim-mqtt"] = {
+  ...(cfg.plugins.entries["dbim-mqtt"] || {}),
   enabled: true,
-}};
+};
 
-cfg.channels = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {{}};
-cfg.channels.dbim_mqtt = {{
-  ...(cfg.channels.dbim_mqtt || {{}}),
+cfg.channels = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+cfg.channels.dbim_mqtt = cfg.channels.dbim_mqtt && typeof cfg.channels.dbim_mqtt === "object" ? cfg.channels.dbim_mqtt : {};
+cfg.channels.dbim_mqtt.enabled = true;
+if (!cfg.channels.dbim_mqtt.replyMode) cfg.channels.dbim_mqtt.replyMode = "openclaw-agent";
+if (typeof cfg.channels.dbim_mqtt.recordOpenClawSession !== "boolean") cfg.channels.dbim_mqtt.recordOpenClawSession = true;
+const instanceDir = path.join(channelDir, shortAgentId);
+const nextInstance = {
+  ...((cfg.channels.dbim_mqtt.instances || []).find((item) => item && (item.localAgentId === shortAgentId || item.agentId === agentId)) || {}),
   enabled: true,
+  localAgentId: shortAgentId,
   agentId,
   connectUrl,
-  connectUrlFile: path.join(channelDir, "connect-url.txt"),
-  userProfileFile: path.join(process.env.HOME || "", ".openclaw", `workspace-${{agentId.split(":").pop()}}`, "USER.md"),
-  stateFile: path.join(channelDir, "state.json"),
-  replyMode: "openclaw-agent",
-  recordOpenClawSession: true,
-}};
+  connectUrlFile: path.join(instanceDir, "connect-url.txt"),
+  userProfileFile: path.join(process.env.HOME || "", ".openclaw", `workspace-${shortAgentId}`, "USER.md"),
+  stateFile: path.join(instanceDir, "state.json"),
+};
+const rawInstances = Array.isArray(cfg.channels.dbim_mqtt.instances) ? cfg.channels.dbim_mqtt.instances : [];
+cfg.channels.dbim_mqtt.instances = rawInstances
+  .filter((item) => item && item.localAgentId !== shortAgentId && item.agentId !== agentId)
+  .concat([nextInstance]);
 
 fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\\n", "utf8");
-fs.writeFileSync(path.join(channelDir, "connect-url.txt"), connectUrl + "\\n", "utf8");
+fs.mkdirSync(instanceDir, { recursive: true });
+fs.writeFileSync(path.join(instanceDir, "connect-url.txt"), connectUrl + "\\n", "utf8");
 NODE
 
+write_install_result "running" "config_written" "插件已安装，配置已写入，等待 Gateway 重启"
 echo "dbim-mqtt 插件已安装并写入 OpenClaw 配置：$OPENCLAW_CONFIG"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl --user list-unit-files openclaw-gateway.service >/dev/null 2>&1; then
-  nohup sh -c 'sleep 2; systemctl --user restart openclaw-gateway.service' >/tmp/dbim-mqtt-openclaw-restart.log 2>&1 &
-  echo "openclaw-gateway.service 将在 2 秒后异步重启；这样可以避免安装命令被 OpenClaw 当前会话的 SIGTERM 中断。"
+  CHECKER_LOG_FILE="$WORKSPACE_REPORT_DIR/install-check.log"
+  nohup env \
+    AGENT_ID="$AGENT_ID" \
+    CONNECT_URL="$CONNECT_URL" \
+    WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_FILE" \
+    HOST_REPORT_FILE="$HOST_REPORT_FILE" \
+    USER_MD_FILE="$USER_MD_FILE" \
+    INSTANCE_DIR="$INSTANCE_DIR" \
+    INSTALL_REPORT_URL="$INSTALL_REPORT_URL" \
+    bash <<'BASH' >"$CHECKER_LOG_FILE" 2>&1 &
+set -euo pipefail
+
+write_result() {
+  RESULT_STATUS="$1" RESULT_STAGE="$2" RESULT_SUMMARY="$3" RESULT_DETAIL="${4:-}" \
+  node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const statePath = path.join(process.env.INSTANCE_DIR || "", "state.json");
+let state = null;
+try {
+  if (fs.existsSync(statePath)) state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+} catch {}
+const payload = {
+  status: process.env.RESULT_STATUS,
+  stage: process.env.RESULT_STAGE,
+  summary: process.env.RESULT_SUMMARY,
+  detail: process.env.RESULT_DETAIL || null,
+  localAgentId: process.env.AGENT_ID,
+  connectUrl: process.env.CONNECT_URL,
+  state,
+  userProfileFile: process.env.USER_MD_FILE,
+  updatedAt: new Date().toISOString(),
+};
+for (const file of [process.env.WORKSPACE_REPORT_FILE, process.env.HOST_REPORT_FILE]) {
+  if (!file) continue;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\\n", "utf8");
+}
+NODE
+}
+
+report_result() {
+  RESULT_STATUS="$1" RESULT_STAGE="$2" RESULT_SUMMARY="$3" RESULT_DETAIL="${4:-}" \
+  node <<'NODE' | curl -fsS -m 10 -X POST "$INSTALL_REPORT_URL" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true
+const fs = require("node:fs");
+const path = require("node:path");
+const statePath = path.join(process.env.INSTANCE_DIR || "", "state.json");
+let state = null;
+try {
+  if (fs.existsSync(statePath)) state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+} catch {}
+let rawText = "";
+try {
+  if (process.env.USER_MD_FILE && fs.existsSync(process.env.USER_MD_FILE)) rawText = fs.readFileSync(process.env.USER_MD_FILE, "utf8");
+} catch {}
+process.stdout.write(JSON.stringify({
+  agent_id: process.env.AGENT_ID,
+  status: process.env.RESULT_STATUS,
+  stage: process.env.RESULT_STAGE,
+  summary: process.env.RESULT_SUMMARY,
+  detail: process.env.RESULT_DETAIL || null,
+  owner_profile: rawText ? { source: "openclaw-user-md", raw_text: rawText } : {},
+  metadata: {
+    local_agent_id: process.env.AGENT_ID,
+    connect_url: process.env.CONNECT_URL,
+    workspace_report_file: process.env.WORKSPACE_REPORT_FILE,
+    host_report_file: process.env.HOST_REPORT_FILE,
+    state,
+  },
+}));
+NODE
+}
+
+sleep 2
+systemctl --user restart openclaw-gateway.service
+attempts=40
+while [ "$attempts" -gt 0 ]; do
+  if systemctl --user is-active openclaw-gateway.service >/dev/null 2>&1 && [ -f "$INSTANCE_DIR/state.json" ]; then
+    if node -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.exit(data.status==="online" ? 0 : 1);' "$INSTANCE_DIR/state.json"; then
+      write_result success install_online "Agent Link 安装完成，插件已在线"
+      report_result success install_online "Agent Link 安装完成，插件已在线"
+      exit 0
+    fi
+  fi
+  attempts=$((attempts - 1))
+  sleep 3
+done
+
+detail=""
+if [ -f "$INSTANCE_DIR/state.json" ]; then
+  detail="$(tail -n 20 "$INSTANCE_DIR/state.json" 2>/dev/null || true)"
+fi
+write_result failed install_timeout "等待 Agent Link 在线超时" "$detail"
+report_result failed install_timeout "等待 Agent Link 在线超时" "$detail"
+BASH
+  echo "openclaw-gateway.service 将在 2 秒后异步重启；后台检查器会把结果写入：$WORKSPACE_REPORT_FILE"
 else
+  write_install_result failed gateway_restart_missing "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway"
+  report_install_result failed gateway_restart_missing "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway"
   echo "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway。"
 fi
 
-echo "检查在线状态：cat $CHANNEL_DIR/state.json"
+echo "安装结果文件：$WORKSPACE_REPORT_FILE"
+echo "宿主机状态文件：$INSTANCE_DIR/state.json"
 """
+    return (
+        script
+        .replace("__PUBLIC_CONNECT_URL__", urls["public_connect_url"])
+        .replace("__PLUGIN_DOWNLOAD_URL__", urls["plugin_download_url"])
+        .replace("__INSTALL_REPORT_URL__", urls["install_report_url"])
+    )
 
 
 def _agent_link_prompt_text(request: Request) -> str:
@@ -1421,18 +1656,16 @@ CONNECT_URL="{urls["public_connect_url"]}" \\
 curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 ```
 
-5. 安装脚本会异步重启 OpenClaw Gateway。当前会话可能短暂中断或显示 SIGTERM，这是预期现象；重启后继续检查，不要停在“命令中断”的表象上。
-6. 重启后执行：
+5. 安装脚本会异步重启 OpenClaw Gateway。当前会话可能短暂中断或显示 SIGTERM，这是预期现象；不要把它当成安装失败。
+6. 优先读取 workspace 里的安装结果镜像。把 `<local-agent-id>` 替换成当前 agent 短 id；如果你要让同一个 OpenClaw Gateway 继续接另一个 agent，再重复执行一次安装命令即可：
 
 ```bash
-systemctl --user is-active openclaw-gateway.service || true
-node -e 'const p=require(process.env.HOME+"/.openclaw/plugins/dbim-mqtt/package.json"); console.log(p.version)'
-cat ~/.openclaw/channels/dbim_mqtt/state.json
-journalctl --user -u openclaw-gateway.service --since "10 minutes ago" --no-pager | grep -E "dbim-mqtt|unknown channel|world-writable|self-register|mqtt connected" | tail -n 50
+cat ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
 ```
 
-7. 如果 state.json 显示 status=online 且日志出现 dbim-mqtt: mqtt connected，请给主人报告：本机 agent id、平台 agent id、插件版本、Gateway 状态、tenantId、MQTT topic。
-8. 如果失败，请给主人报告失败阶段、错误摘要和最近相关日志；不要泄露 auth_token、MQTT password 或完整 bootstrap 响应。
+7. 如果 `install-result.json` 显示 `status=success` 或其中 `state.status=online`，请给主人报告：本机 agent id、平台 agent id、插件版本、tenantId、MQTT topic、结果文件路径。
+8. 如果 `install-result.json` 显示失败或超时，请只给主人报告失败阶段、错误摘要和结果文件里的 detail。不要泄露 auth_token、MQTT password 或完整 bootstrap 响应。
+9. 只有当结果文件缺失、且你明确具备宿主机权限时，才再补充检查 `~/.openclaw/channels/dbim_mqtt/<local-agent-id>/state.json` 或 `journalctl`；沙盒环境下不要把“无法访问宿主机”误判为安装失败。
 
 平台地址：
 - 接入说明：{urls["public_connect_url"]}

@@ -41,12 +41,6 @@ app = FastAPI(
 ### 认证方式
 所有接口（除 `/health`）均需要 JWT Bearer Token。
 
-**获取 Token（开发环境）：**
-```python
-from app.core.security import create_access_token
-token = create_access_token("user-id", {"tenant_id": "your-tenant-id"})
-```
-
 在右上角 **Authorize** 按钮中填入：`Bearer <token>`
 
 [查看错误记录](/docs/errors)
@@ -139,7 +133,7 @@ async def custom_swagger_docs():
     color: #d1fae5;
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 260px;
+    max-height: 250px;
     overflow: auto;
   }
   #agent-test-panel .hint { color: #94a3b8; font-size: 12px; margin-top: 8px; }
@@ -201,7 +195,7 @@ async def custom_swagger_docs():
   <br>
   <button id="copy-agent-onboarding">复制给 Agent 的完整指令</button>
   <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
-  <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>  
+  <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
 <div id="agent-test-panel">
@@ -223,24 +217,9 @@ async def custom_swagger_docs():
   const message = document.getElementById("agent-test-message");
   const output = document.getElementById("agent-test-output");
   const copyOnboarding = document.getElementById("copy-agent-onboarding");
-  const errorFilter = document.getElementById("agent-error-filter");
-  const errorLink = document.getElementById("agent-error-link");
 
   function log(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  }
-
-  function syncErrorLink() {
-    if (!errorLink) return;
-    let agentId = "";
-    if (errorFilter && errorFilter.value.trim()) {
-      agentId = errorFilter.value.trim();
-    } else if (select && select.value) {
-      try {
-        agentId = JSON.parse(select.value).agent_id || "";
-      } catch (_) {}
-    }
-    errorLink.href = agentId ? `/docs/errors?agent_id=${encodeURIComponent(agentId)}` : "/docs/errors";
   }
 
   async function api(path, options) {
@@ -290,10 +269,6 @@ async def custom_swagger_docs():
     });
   }
 
-  if (errorFilter) {
-    errorFilter.addEventListener("input", syncErrorLink);
-  }
-
   async function loadAgents() {
     try {
       const agents = await api("/v1/docs-test/agents");
@@ -308,7 +283,6 @@ async def custom_swagger_docs():
         option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.agent_id} | ${agent.tenant_id}`;
         select.appendChild(option);
       }
-      syncErrorLink();
       log(`已加载 ${agents.length} 个 agent，选择后可直接发送测试消息。`);
     } catch (err) {
       log("加载 agent 失败：\\n" + err.message);
@@ -358,9 +332,6 @@ async def custom_swagger_docs():
     }
   });
 
-  if (select) {
-    select.addEventListener("change", syncErrorLink);
-  }
   loadAgents();
 })();
 </script>

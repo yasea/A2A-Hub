@@ -16,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 
-from remote_api_common import ApiClient, 默认平台地址, 打印分隔, 打印成功
+from remote_api_common import ApiClient, 默认平台地址, 打印分隔, 打印成功, 公开自注册, 读取公开清单
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,25 +51,19 @@ def main() -> int:
     client = ApiClient(args.api_base, verify_tls=args.verify_tls)
 
     打印分隔("步骤 1：读取公开 manifest")
-    manifest = client.get("/v1/agent-link/manifest")["data"]
+    manifest = 读取公开清单(client)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
     打印分隔("步骤 2：提交自注册")
     owner_profile = 读取用户信息(args)
-    agent_id = args.agent_id if ":" in args.agent_id else f"openclaw:{args.agent_id}"
-    resp = client.post(
-        "/v1/agent-link/self-register",
-        {
-            "agent_id": agent_id,
-            "display_name": args.agent_id.split(":")[-1].upper(),
-            "capabilities": {"analysis": True, "generic": True},
-            "config_json": {
-                "workspace": args.agent_id.split(":")[-1],
-                "local_agent_id": args.agent_id.split(":")[-1],
-            },
-            "owner_profile": owner_profile,
-        },
-    )["data"]
+    local_agent_id = args.agent_id.split(":")[-1]
+    resp = 公开自注册(
+        client,
+        agent_id=args.agent_id,
+        display_name=local_agent_id.upper(),
+        local_agent_id=local_agent_id,
+        owner_profile=owner_profile,
+    )
     print(json.dumps({
         "agent_id": resp["agent_id"],
         "tenant_id": resp["tenant_id"],

@@ -3,11 +3,10 @@
 远端 agent-to-agent 全流程测试。
 
 流程：
-1. 用 service account token 给 source agent 生成 connect_url
-2. 读取 source agent 的 bootstrap，拿到 source agent 自己的 Agent Link token
-3. 用 source agent token 创建 context
-4. 调 /v1/agent-link/messages/send，模拟 source agent 给 target agent 发消息
-5. 轮询任务并读取 assistant 回复
+1. source agent 通过公开自注册拿到自己的 Agent Link token
+2. 用 source agent token 创建 context
+3. 调 /v1/agent-link/messages/send，模拟 source agent 给 target agent 发消息
+4. 轮询任务并读取 assistant 回复
 
 说明：
 - 这个脚本不要求 source agent 插件真实在线，因为这里只用它的 Agent Link token 模拟发起方。
@@ -24,27 +23,22 @@ import sys
 from remote_api_common import (
     ApiClient,
     默认平台地址,
-    默认租户,
-    默认签发密钥,
     创建上下文,
     发送Agent消息,
     打印分隔,
     打印成功,
-    生成接入链接,
+    公开自注册,
     等待任务完成,
-    读取Bootstrap,
     读取任务消息,
-    签发服务账号令牌,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="模拟一个已注册 agent 给另一个 OpenClaw agent 发消息")
     parser.add_argument("--api-base", default=os.environ.get("API_BASE", 默认平台地址))
-    parser.add_argument("--tenant-id", default=os.environ.get("TENANT_ID", 默认租户))
-    parser.add_argument("--issuer-secret", default=os.environ.get("SERVICE_ACCOUNT_ISSUER_SECRET", 默认签发密钥))
     parser.add_argument("--source-agent-id", default=os.environ.get("SOURCE_AGENT_ID", "openclaw:ava"))
     parser.add_argument("--target-agent-id", default=os.environ.get("TARGET_AGENT_ID", "openclaw:mia"))
+    parser.add_argument("--source-user-md-file", default=os.environ.get("SOURCE_USER_MD_FILE", ""))
     parser.add_argument("--message", default=os.environ.get("MESSAGE_TEXT", "请只回复：REMOTE_AGENT_TO_AGENT_OK"))
     parser.add_argument("--expect", default=os.environ.get("EXPECT_TEXT", "REMOTE_AGENT_TO_AGENT_OK"))
     parser.add_argument("--wait-seconds", type=int, default=int(os.environ.get("TASK_WAIT_SECONDS", "180")))
@@ -53,25 +47,37 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def 构造owner_profile(path_text: str, local_agent_id: str) -> dict:
+    if path_text:
+        raw_text = open(os.path.expanduser(path_text), "r", encoding="utf-8").read()
+        return {
+            "source": "openclaw-user-md",
+            "user_md_path": os.path.expanduser(path_text),
+            "raw_text": raw_text,
+            "local_agent_id": local_agent_id,
+        }
+    return {
+        "source": "remote-agent-to-agent-test",
+        "name": f"{local_agent_id} owner",
+        "local_agent_id": local_agent_id,
+    }
+
+
 def main() -> int:
     args = parse_args()
 
-    打印分隔("步骤 1：用 service account 准备 source agent 的接入配置")
-    service_token = 签发服务账号令牌(
-        api_base=args.api_base,
-        issuer_secret=args.issuer_secret,
-        tenant_id=args.tenant_id,
-        service_account_id="platform-remote-agent-token-tester",
-        component_type="agent_link_tester",
-        scopes=["messages:send"],
-        verify_tls=args.verify_tls,
+    打印分隔("步骤 1：source agent 公开自注册，获取 Agent Link token")
+    public_client = ApiClient(args.api_base, verify_tls=args.verify_tls)
+    local_agent_id = args.source_agent_id.split(":", 1)[-1]
+    source_bootstrap = 公开自注册(
+        public_client,
+        agent_id=args.source_agent_id,
+        display_name=local_agent_id.upper(),
+        local_agent_id=local_agent_id,
+        owner_profile=构造owner_profile(args.source_user_md_file, local_agent_id),
     )
-    service_client = ApiClient(args.api_base, token=service_token, verify_tls=args.verify_tls)
-    source_short_name = args.source_agent_id.split(":", 1)[-1].upper()
-    source_link = 生成接入链接(service_client, args.source_agent_id, source_short_name, source_short_name.lower())
-    source_bootstrap = 读取Bootstrap(args.api_base, source_link["bootstrap_url"], verify_tls=args.verify_tls)
     source_agent_token = source_bootstrap["auth_token"]
-    打印成功(f"source agent token 已准备：{args.source_agent_id}")
+    打印成功(f"source agent token 已准备：{source_bootstrap['agent_id']}")
 
     打印分隔("步骤 2：source agent 创建 context")
     agent_client = ApiClient(args.api_base, token=source_agent_token, verify_tls=args.verify_tls)

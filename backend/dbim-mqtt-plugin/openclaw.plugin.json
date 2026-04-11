@@ -1,13 +1,194 @@
 {
   "id": "dbim-mqtt",
-  "name": "dbim-mqtt",
-  "version": "0.3.2",
-  "main": "index.js",
+  "name": "DBIM MQTT",
+  "description": "OpenClaw DBIM MQTT channel plugin with embedded Agent Link Core.",
+  "version": "0.4.0",
   "channels": ["dbim_mqtt"],
   "channelConfigs": {
     "dbim_mqtt": {
-      "title": "DBIM MQTT",
-      "description": "Agent Link Core over MQTT for OpenClaw agents."
+      "label": "DBIM MQTT",
+      "description": "A2A Hub Agent Link over MQTT.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable the DBIM MQTT channel."
+          },
+          "agentId": {
+            "type": "string",
+            "description": "Local OpenClaw agent id, for example ava or mia."
+          },
+          "connectUrl": {
+            "type": "string",
+            "description": "Public Agent Link URL exposed by A2A Hub. Recommended value is /agent-link/connect."
+          },
+          "connectUrlFile": {
+            "type": "string",
+            "description": "Optional local file containing connectUrl. Mainly kept for compatibility or local development."
+          },
+          "userProfileFile": {
+            "type": "string",
+            "description": "Optional OpenClaw USER.md path used for public self-registration owner profile."
+          },
+          "stateFile": {
+            "type": "string",
+            "description": "Optional path for writing runtime state JSON."
+          },
+          "presenceIntervalSec": {
+            "type": "integer",
+            "minimum": 5,
+            "description": "Presence heartbeat interval in seconds."
+          },
+          "replyMode": {
+            "type": "string",
+            "enum": ["openclaw-agent", "handler", "echo"],
+            "description": "Reply generation mode. Defaults to openclaw-agent; handler remains available for custom local processors."
+          },
+          "openClawCommand": {
+            "type": "string",
+            "description": "OpenClaw CLI command used when replyMode=openclaw-agent."
+          },
+          "openClawTimeoutSec": {
+            "type": "integer",
+            "minimum": 10,
+            "description": "Timeout in seconds for a single OpenClaw agent turn."
+          },
+          "httpTimeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "description": "HTTP bootstrap, presence, and message request timeout in milliseconds."
+          },
+          "bootstrapRetryIntervalSec": {
+            "type": "integer",
+            "minimum": 5,
+            "description": "Maximum retry interval in seconds after bootstrap or self-registration fails."
+          },
+          "tlsRejectUnauthorized": {
+            "type": "boolean",
+            "description": "Whether HTTPS requests must validate the remote TLS certificate."
+          },
+          "recordOpenClawSession": {
+            "type": "boolean",
+            "description": "Whether task dispatch and replies should also be written into local OpenClaw sessions."
+          },
+          "handlerCommand": {
+            "type": "string",
+            "description": "Optional local command used when replyMode=handler."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Extra metadata sent with presence heartbeats."
+          },
+          "instances": {
+            "type": "array",
+            "description": "Optional multi-agent configuration. Each item starts one Agent Link runtime inside the same OpenClaw gateway.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "localAgentId": { "type": "string" },
+                "agentId": { "type": "string" },
+                "connectUrl": { "type": "string" },
+                "connectUrlFile": { "type": "string" },
+                "userProfileFile": { "type": "string" },
+                "stateFile": { "type": "string" },
+                "presenceIntervalSec": { "type": "integer", "minimum": 5 },
+                "replyMode": { "type": "string", "enum": ["openclaw-agent", "handler", "echo"] },
+                "openClawCommand": { "type": "string" },
+                "openClawTimeoutSec": { "type": "integer", "minimum": 10 },
+                "httpTimeoutMs": { "type": "integer", "minimum": 1000 },
+                "bootstrapRetryIntervalSec": { "type": "integer", "minimum": 5 },
+                "tlsRejectUnauthorized": { "type": "boolean" },
+                "recordOpenClawSession": { "type": "boolean" },
+                "handlerCommand": { "type": "string" },
+                "metadata": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable or disable the DBIM MQTT channel."
+      },
+      "agentId": {
+        "type": "string",
+        "description": "Local OpenClaw agent id, for example ava or mia."
+      },
+      "connectUrl": {
+        "type": "string",
+        "description": "Public Agent Link URL exposed by A2A Hub. Recommended value is /agent-link/connect."
+      },
+      "connectUrlFile": {
+        "type": "string",
+        "description": "Optional local file containing connectUrl. Mainly kept for compatibility or local development."
+      },
+      "userProfileFile": {
+        "type": "string",
+        "description": "Optional OpenClaw USER.md path used for public self-registration owner profile."
+      },
+      "stateFile": {
+        "type": "string",
+        "description": "Optional path for writing runtime state JSON."
+      },
+      "presenceIntervalSec": {
+        "type": "integer",
+        "minimum": 5,
+        "description": "Presence heartbeat interval in seconds."
+      },
+      "replyMode": {
+        "type": "string",
+        "enum": ["openclaw-agent", "handler", "echo"],
+        "description": "Reply generation mode. Defaults to openclaw-agent; handler remains available for custom local processors."
+      },
+      "openClawCommand": {
+        "type": "string",
+        "description": "OpenClaw CLI command used when replyMode=openclaw-agent."
+      },
+      "openClawTimeoutSec": {
+        "type": "integer",
+        "minimum": 10,
+        "description": "Timeout in seconds for a single OpenClaw agent turn."
+      },
+      "httpTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "description": "HTTP bootstrap, presence, and message request timeout in milliseconds."
+      },
+      "bootstrapRetryIntervalSec": {
+        "type": "integer",
+        "minimum": 5,
+        "description": "Maximum retry interval in seconds after bootstrap or self-registration fails."
+      },
+      "tlsRejectUnauthorized": {
+        "type": "boolean",
+        "description": "Whether HTTPS requests must validate the remote TLS certificate."
+      },
+      "recordOpenClawSession": {
+        "type": "boolean",
+        "description": "Whether task dispatch and replies should also be written into local OpenClaw sessions."
+      },
+      "handlerCommand": {
+        "type": "string",
+        "description": "Optional local command used when replyMode=handler."
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Extra metadata sent with presence heartbeats."
+      },
+      "instances": {
+        "type": "array",
+        "description": "Optional multi-agent configuration. Each item starts one Agent Link runtime inside the same OpenClaw gateway."
+      }
     }
   }
 }
