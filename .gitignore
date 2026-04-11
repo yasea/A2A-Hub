@@ -1,0 +1,66 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime config / secrets
+*.env
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.local
+backend/.env.prod
+backend/.env.dev
+
+# Certificates / keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Logs / temp
+*.log
+logs/
+tmp/
+.tmp/
+
+# Node / plugin build outputs
+node_modules/
+backend/dbim-mqtt-plugin/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Database / local data
+*.sqlite3
+*.db
+postgres-data/
+mosquitto-data/
+
+# Test artifacts
+tests/.tmp/
+tests/output/
+tests/*.local.json
+
+history/

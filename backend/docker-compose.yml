@@ -1,0 +1,85 @@
+services:
+  api:
+    build: .
+    container_name: a2a-hub-api
+    ports:
+      - "${API_HOST_PORT:-1880}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      DEBUG: "${DEBUG:-true}"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a_hub}:${POSTGRES_PASSWORD:-a2a_hub_password}@postgres:5432/${POSTGRES_DB:-a2a_hub}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-prod}
+      SERVICE_ACCOUNT_ISSUER_SECRET: ${SERVICE_ACCOUNT_ISSUER_SECRET:-dev-service-account-issuer-secret}
+      SERVICE_ACCOUNT_TOKEN_EXPIRE_MINUTES: ${SERVICE_ACCOUNT_TOKEN_EXPIRE_MINUTES:-1440}
+      A2A_HUB_PUBLIC_BASE_URL: ${A2A_HUB_PUBLIC_BASE_URL:-http://127.0.0.1:1880}
+      MQTT_BROKER_URL: mqtt://mosquitto:1883
+      MQTT_PUBLIC_BROKER_URL: ${MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}
+      MQTT_SHARED_USERNAME: ${MQTT_SHARED_USERNAME:-agentlink}
+      MQTT_SHARED_PASSWORD: ${MQTT_SHARED_PASSWORD:-agentlink-dev-password}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    volumes:
+      - ./app:/app/app   # 开发热重载
+      - ./dbim-mqtt-plugin:/app/dbim-mqtt-plugin:ro
+
+  db-init:
+    build: .
+    container_name: a2a-hub-db-init
+    restart: "no"
+    command: ["python", "scripts/init_db.py"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a_hub}:${POSTGRES_PASSWORD:-a2a_hub_password}@postgres:5432/${POSTGRES_DB:-a2a_hub}
+      DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-tenant_001}
+      DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-默认租户}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: a2a-hub-postgres
+    ports:
+      - "${POSTGRES_HOST_PORT:-1881}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-a2a_hub}
+      POSTGRES_USER: ${POSTGRES_USER:-a2a_hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-a2a_hub_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-a2a_hub} -d ${POSTGRES_DB:-a2a_hub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: a2a-hub-redis
+    ports:
+      - "${REDIS_HOST_PORT:-1882}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: a2a-hub-mosquitto
+    ports:
+      - "${MQTT_HOST_PORT:-1883}:1883"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/passwordfile.example:/mosquitto/config/passwordfile:ro
+      - ./deploy/mosquitto/aclfile:/mosquitto/config/aclfile:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  postgres-data:
+  mosquitto-data:
