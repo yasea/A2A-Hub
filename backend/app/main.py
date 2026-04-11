@@ -48,6 +48,9 @@ token = create_access_token("user-id", {"tenant_id": "your-tenant-id"})
 ```
 
 在右上角 **Authorize** 按钮中填入：`Bearer <token>`
+
+[查看错误记录](/docs/errors)
+
 """,
     lifespan=lifespan,
     docs_url=None,
@@ -198,10 +201,7 @@ async def custom_swagger_docs():
   <br>
   <button id="copy-agent-onboarding">复制给 Agent 的完整指令</button>
   <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
-  <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
-  <br>
-  <input id="agent-error-filter" placeholder="错误记录过滤，如 openclaw:mia" />
-  <a id="agent-error-link" class="secondary" href="/docs/errors" target="_blank">打开错误记录</a>
+  <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>  
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
 <div id="agent-test-panel">
