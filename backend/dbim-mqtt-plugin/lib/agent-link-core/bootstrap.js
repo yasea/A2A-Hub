@@ -1,7 +1,7 @@
 "use strict";
 
 const { requestJson } = require("./http-client");
-const { platformAgentId, readOwnerProfile, shortAgentId } = require("../owner-profile");
+const { platformAgentId, readAgentSummary, readOwnerProfile, shortAgentId } = require("../owner-profile");
 
 function normalizeBootstrap(connectUrl, baseUrl, data) {
   return {
@@ -23,6 +23,7 @@ function normalizeBootstrap(connectUrl, baseUrl, data) {
 
 async function selfRegister(connectUrl, baseUrl, config) {
   const ownerProfile = readOwnerProfile(config);
+  const agentSummary = readAgentSummary(config);
   const agentId = platformAgentId(config.agentId);
   const localAgentId = shortAgentId(config.agentId);
   const resp = await requestJson(`${baseUrl}/v1/agent-link/self-register`, {
@@ -38,10 +39,12 @@ async function selfRegister(connectUrl, baseUrl, config) {
         analysis: true,
         generic: true,
       },
+      agent_summary: agentSummary,
       config_json: {
         workspace: localAgentId,
         local_agent_id: localAgentId,
         plugin: "dbim-mqtt",
+        agent_summary: agentSummary,
       },
       owner_profile: ownerProfile,
     }),

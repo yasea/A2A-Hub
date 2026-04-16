@@ -1,7 +1,14 @@
+# Docker Compose 配置
+# 工作目录：项目根目录
+# .env 文件位置：同目录
+# backend 源码位置：./
+
 services:
   api:
-    build: .
+    build: ./backend
     container_name: a2a-hub-api
+    env_file:
+      - ./.env  # 同目录的 .env 文件
     ports:
       - "${API_HOST_PORT:-1880}:8000"
     environment:
@@ -15,8 +22,10 @@ services:
       A2A_HUB_PUBLIC_BASE_URL: ${A2A_HUB_PUBLIC_BASE_URL:-http://127.0.0.1:1880}
       MQTT_BROKER_URL: mqtt://mosquitto:1883
       MQTT_PUBLIC_BROKER_URL: ${MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}
-      MQTT_SHARED_USERNAME: ${MQTT_SHARED_USERNAME:-agentlink}
-      MQTT_SHARED_PASSWORD: ${MQTT_SHARED_PASSWORD:-agentlink-dev-password}
+      MQTT_TENANT_PASSWORD_SECRET: ${MQTT_TENANT_PASSWORD_SECRET:-dev-tenant-mqtt-secret-change-in-production}
+      MQTT_AUTH_PASSWORDFILE: /app/runtime/mosquitto-auth/passwordfile
+      MQTT_AUTH_ACLFILE: /app/runtime/mosquitto-auth/aclfile
+      MQTT_AUTH_RELOAD_STAMP: /app/runtime/mosquitto-auth/reload.stamp
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -25,13 +34,16 @@ services:
       mosquitto:
         condition: service_started
     volumes:
-      - ./app:/app/app   # 开发热重载
-      - ./dbim-mqtt-plugin:/app/dbim-mqtt-plugin:ro
+      - ./backend/app:/app/app   # 开发热重载
+      - ./backend/dbim-mqtt-plugin:/app/dbim-mqtt-plugin:ro
+      - ./deploy/mosquitto:/app/runtime/mosquitto-auth
 
   db-init:
-    build: .
+    build: ./backend
     container_name: a2a-hub-db-init
     restart: "no"
+    env_file:
+      - ./.env  # 同目录的 .env 文件
     command: ["python", "scripts/init_db.py"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a_hub}:${POSTGRES_PASSWORD:-a2a_hub_password}@postgres:5432/${POSTGRES_DB:-a2a_hub}
@@ -44,6 +56,8 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: a2a-hub-postgres
+    env_file:
+      - ./.env  # 同目录的 .env 文件
     ports:
       - "${POSTGRES_HOST_PORT:-1881}:5432"
     environment:
@@ -72,12 +86,11 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: a2a-hub-mosquitto
+    command: ["/bin/sh", "/mosquitto/config-live/run-with-reload.sh"]
     ports:
       - "${MQTT_HOST_PORT:-1883}:1883"
     volumes:
-      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./deploy/mosquitto/passwordfile.example:/mosquitto/config/passwordfile:ro
-      - ./deploy/mosquitto/aclfile:/mosquitto/config/aclfile:ro
+      - ./deploy/mosquitto:/mosquitto/config-live
       - mosquitto-data:/mosquitto/data
 
 volumes:

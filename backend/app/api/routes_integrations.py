@@ -63,6 +63,7 @@ from app.services.openclaw_gateway_service import (
     openclaw_gateway_broker,
 )
 from app.services.metering_service import MeteringService
+from app.services.mosquitto_auth_sync import build_default_mosquitto_auth_sync_service
 from app.services.openclaw_service import OpenClawService
 from app.services.rocketchat_service import RocketChatService
 from app.services.stream_service import task_event_broker
@@ -126,6 +127,13 @@ def _owner_profile_key(owner_profile: dict[str, Any]) -> str:
     return "anonymous:default"
 
 
+def _short_openclaw_agent_id(agent_id: str) -> str:
+    value = str(agent_id or "").strip()
+    if not value:
+        return "agent"
+    return value.split(":", 1)[1] if ":" in value else value
+
+
 def _owner_tenant_id(owner_profile: dict[str, Any]) -> str:
     digest = hashlib.sha256(_owner_profile_key(owner_profile).encode("utf-8")).hexdigest()[:16]
     return f"owner_{digest}"
@@ -144,6 +152,29 @@ def _truncate(value: str | None, limit: int = 1000) -> str | None:
         return None
     value = str(value)
     return value if len(value) <= limit else value[:limit] + "..."
+
+
+def _normalize_agent_summary(
+    agent_summary: str | None,
+    agent_id: str,
+    owner_profile: dict[str, Any],
+    config_json: dict[str, Any] | None = None,
+) -> str:
+    candidates = [
+        agent_summary,
+        (config_json or {}).get("agent_summary"),
+        owner_profile.get("agent_summary"),
+        owner_profile.get("agent_intro"),
+        owner_profile.get("self_intro"),
+        owner_profile.get("bio"),
+        owner_profile.get("summary"),
+        owner_profile.get("description"),
+    ]
+    for candidate in candidates:
+        text = " ".join(str(candidate or "").strip().split())
+        if text:
+            return text[:160]
+    return f"OpenClaw agent {_short_openclaw_agent_id(agent_id)}"
 
 
 def _error_payload_request_path(request: Request | None) -> str | None:
@@ -180,6 +211,13 @@ async def _record_error_event(
         request_path=_error_payload_request_path(request),
         payload=payload,
     )
+
+
+async def _sync_owner_tenant_mosquitto_auth(db) -> None:
+    service = build_default_mosquitto_auth_sync_service()
+    if not service.configured:
+        return
+    await service.sync_active_tenants(db)
 
 
 async def _require_agent_link_identity(request: Request, stage: str) -> tuple[str, dict[str, Any], str, str]:
@@ -355,6 +393,7 @@ async def register_openclaw_agent(
     tenant: TenantDep,
 ):
     registry = AgentRegistry(db)
+    agent_summary = _normalize_agent_summary(req.agent_summary, req.agent_id, {}, req.config_json)
     agent = await registry.register(
         agent_id=req.agent_id,
         tenant_id=tenant["tenant_id"],
@@ -362,7 +401,7 @@ async def register_openclaw_agent(
         display_name=req.display_name,
         capabilities=req.capabilities,
         auth_scheme="jwt",
-        config_json={"adapter": "openclaw_gateway", **req.config_json},
+        config_json={"adapter": "openclaw_gateway", **req.config_json, "agent_summary": agent_summary},
         actor_id=tenant.get("sub"),
     )
     auth_token = _build_openclaw_agent_token(tenant["tenant_id"], agent.agent_id, tenant.get("sub"))
@@ -372,6 +411,7 @@ async def register_openclaw_agent(
         OpenClawAgentRegistrationResponse(
             agent_id=agent.agent_id,
             tenant_id=tenant["tenant_id"],
+            agent_summary=agent_summary,
             auth_token=auth_token,
             ws_url=urls["ws_url"],
             onboarding_url=urls["onboarding_url"],
@@ -505,6 +545,7 @@ async def get_agent_link_manifest(request: Request):
 async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: Request):
     agent_id = None
     tenant_id = None
+    agent_summary = None
     owner_profile = {
         **req.owner_profile,
         "registration_model": "owner_profile",
@@ -513,6 +554,7 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
         agent_id = _normalize_openclaw_agent_id(req.agent_id)
         requested_tenant_id = _owner_tenant_id(owner_profile)
         display_name = req.display_name or agent_id
+        agent_summary = _normalize_agent_summary(req.agent_summary, agent_id, owner_profile, req.config_json)
         urls = _openclaw_urls(request)
 
         async with AsyncSessionLocal() as db:
@@ -537,10 +579,11 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
                     capabilities=req.capabilities,
                     auth_scheme="jwt",
                     config_json={
+                        **req.config_json,
                         "adapter": "openclaw_gateway",
                         "registration_mode": "self_register",
+                        "agent_summary": agent_summary,
                         "owner_profile": owner_profile,
-                        **req.config_json,
                     },
                     actor_id=str(owner_profile.get("user_id") or owner_profile.get("owner_id") or agent_id),
                 )
@@ -548,6 +591,7 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
             except Exception:
                 await db.rollback()
                 raise
+            await _sync_owner_tenant_mosquitto_auth(db)
 
         subject = str(owner_profile.get("user_id") or owner_profile.get("owner_id") or agent_id)
         auth_token = _build_openclaw_agent_token(tenant_id, agent.agent_id, subject)
@@ -556,6 +600,7 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
             OpenClawAgentRegistrationResponse(
                 agent_id=agent.agent_id,
                 tenant_id=tenant_id,
+                agent_summary=agent_summary,
                 auth_token=auth_token,
                 ws_url=urls["ws_url"],
                 onboarding_url=urls["public_connect_url"],
@@ -614,11 +659,14 @@ async def agent_link_install_report(req: AgentLinkInstallReportRequest, request:
         "report_model": "install_result",
     }
     requested_tenant_id = _owner_tenant_id(owner_profile)
-
-    async with AsyncSessionLocal() as db:
-        existing_result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
-        existing_agent = existing_result.scalar_one_or_none()
-        tenant_id = existing_agent.tenant_id if existing_agent else requested_tenant_id
+    tenant_id = requested_tenant_id
+    try:
+        async with AsyncSessionLocal() as db:
+            existing_result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+            existing_agent = existing_result.scalar_one_or_none()
+            tenant_id = existing_agent.tenant_id if existing_agent else requested_tenant_id
+    except Exception:
+        tenant_id = requested_tenant_id
 
     await _record_error_event(
         source_side="agent",
@@ -687,6 +735,7 @@ async def get_openclaw_bootstrap(token: str, request: Request):
             OpenClawAgentRegistrationResponse(
                 agent_id=agent_id,
                 tenant_id=tenant_id,
+                agent_summary=_normalize_agent_summary(config_json.get("agent_summary"), agent_id, {}, config_json),
                 auth_token=auth_token,
                 ws_url=urls["ws_url"],
                 onboarding_url=f'{urls["onboarding_url"]}?token={token}',
@@ -1158,7 +1207,7 @@ presence_url={urls["presence_url"]}
 
 ## 执行约束
 
-1. 先确认本地 OpenClaw agent id，例如 `mia`。如果无法判断，询问主人。
+1. 优先自动识别本地 OpenClaw agent id，例如 `mia`。只有自动识别失败时，再询问主人；不要猜测。
 2. 如果需要安装插件或修改 `~/.openclaw/openclaw.json`，先向主人说明将要执行的动作。
 3. 不要向主人索要 tenant_id。平台会根据 `USER.md` 自动派生内部租户。
 4. 不要把 `auth_token`、MQTT password 或完整 bootstrap 响应发到公开聊天窗口。
@@ -1171,12 +1220,11 @@ presence_url={urls["presence_url"]}
 在 OpenClaw 所在机器执行：
 
 ```bash
-AGENT_ID=<local-agent-id> \\
 CONNECT_URL="{urls["public_connect_url"]}" \\
 curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 ```
 
-`AGENT_ID` 必须是本机 OpenClaw 的短 agent id，例如 `mia`、`ava`。如果你无法确认，不要猜测，先询问主人。
+如自动识别失败，再额外补 `AGENT_ID=<local-agent-id>`。可传平台 id `openclaw:mia`，脚本会自动转成本机短 id。
 
 自动安装脚本会：
 
@@ -1185,7 +1233,7 @@ curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 3. 执行 `npm install --omit=dev`。
 4. 备份并更新 `~/.openclaw/openclaw.json`。
 5. 在 `channels.dbim_mqtt.instances` 中新增或更新当前 agent 实例。
-6. 异步延迟重启 `openclaw-gateway.service`；如果没有 systemd user service，会提示手动重启。
+6. 异步延迟重启 `openclaw-gateway.service`；如果没有 systemd user service，会退回到手动拉起 `openclaw gateway run --force`。
 
 如果你看到 `channels.dbim_mqtt: unknown channel id: dbim_mqtt`，说明本机 OpenClaw 还没有识别到带 `dbim_mqtt` channel 声明的插件 manifest，或配置先于插件安装生效。也要检查日志里是否有 `world-writable path`，这种情况下 OpenClaw 会出于安全原因阻止加载插件。重新执行上面的自动安装脚本；脚本会先安装新插件包、修正插件目录权限，再写入 `channels.dbim_mqtt` 配置。
 
@@ -1227,7 +1275,7 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
           "localAgentId": "<local-agent-id>",
           "agentId": "<local-agent-id>",
           "connectUrl": "{urls["public_connect_url"]}",
-          "userProfileFile": "~/.openclaw/workspace-<local-agent-id>/USER.md",
+          "userProfileFile": "~/.openclaw/workspace/<local-agent-id>/USER.md",
           "stateFile": "~/.openclaw/channels/dbim_mqtt/<local-agent-id>/state.json"
         }}
       ]
@@ -1253,14 +1301,14 @@ Content-Type: application/json
 }}
 ```
 
-响应中的 `auth_token` 是 agent 的私密凭证。插件会用它调用 presence 接口，并作为 MQTT password 建立长连接。
+响应中的 `auth_token` 是 agent 的平台私密凭证。MQTT 用户名和密码按租户动态下发，不能写死成共享账号。
 
 ## 安装后检查
 
 安装并重启 OpenClaw Gateway 后，优先检查 workspace 结果镜像：
 
 ```bash
-cat ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
+cat ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 ```
 
 期望看到：
@@ -1279,7 +1327,7 @@ Agent Link 安装完成。
 - Agent Link 状态: online
 - tenantId: <tenantId>
 - MQTT topic: <topic>
-- 结果文件: ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
+- 结果文件: ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 - 备注: 如果你希望我继续，我可以等待平台测试消息并回复。
 ```
 
@@ -1304,12 +1352,12 @@ Agent Link 安装完成。
 
 def _build_openclaw_install_script(request: Request) -> str:
     urls = _openclaw_urls(request)
-    script = """#!/usr/bin/env bash
+    script = r"""#!/usr/bin/env bash
 set -euo pipefail
 
 # 这个脚本面向 OpenClaw agent 自动安装 A2A Hub 的 dbim-mqtt 插件。
 # 可配置环境变量：
-#   AGENT_ID=<local-agent-id>
+#   AGENT_ID=<local-agent-id>   # 可选；无法自动识别时再传
 #   CONNECT_URL=__PUBLIC_CONNECT_URL__
 #   OPENCLAW_CONFIG=~/.openclaw/openclaw.json
 
@@ -1321,26 +1369,114 @@ CHANNEL_DIR="$OPENCLAW_HOME/channels/dbim_mqtt"
 PLUGIN_URL="__PLUGIN_DOWNLOAD_URL__"
 INSTALL_REPORT_URL="__INSTALL_REPORT_URL__"
 
-AGENT_ID="${AGENT_ID:-${OPENCLAW_AGENT_ID:-}}"
+AGENT_ID="${AGENT_ID:-${OPENCLAW_AGENT_ID:-}}" 
+
 if [ -z "$AGENT_ID" ]; then
-  candidate_count=0
-  candidate_agent=""
-  for user_md in "$OPENCLAW_HOME"/workspace-*/USER.md; do
-    [ -f "$user_md" ] || continue
-    workspace_name="$(basename "$(dirname "$user_md")")"
-    local_id="${workspace_name#workspace-}"
-    if [ "$local_id" != "main" ]; then
-      candidate_count=$((candidate_count + 1))
-      candidate_agent="$local_id"
-    fi
-  done
-  if [ "$candidate_count" -eq 1 ]; then
-    AGENT_ID="$candidate_agent"
-    echo "已从唯一 workspace USER.md 推断 AGENT_ID=$AGENT_ID"
-  else
-    echo "无法安全推断 AGENT_ID。请用 AGENT_ID=<本机OpenClaw短agent id> 重新执行，例如 AGENT_ID=mia。" >&2
+  AGENT_ID="$(
+    OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG="$OPENCLAW_CONFIG" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+function normalizeAgentId(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.split(":").pop();
+}
+
+function parseAgentHint(text) {
+  if (typeof text !== "string" || !text.trim()) return "";
+  const patterns = [
+    /^\s*(?:local[_ -]?agent[_ -]?id|agent[_ -]?id)\s*[:=]\s*["']?([a-zA-Z0-9:_-]+)["']?\s*$/im,
+    /^\s*[-*]\s*\*{0,2}(?:Local\s+)?Agent\s+ID\*{0,2}\s*[:：]\s*`?([a-zA-Z0-9:_-]+)`?\s*$/im,
+    /^\s*[-*]\s*(?:local[_ -]?agent[_ -]?id|agent[_ -]?id)\s*[:：]\s*`?([a-zA-Z0-9:_-]+)`?\s*$/im,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const hint = normalizeAgentId(match && match[1]);
+    if (hint) return hint;
+  }
+  return "";
+}
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function addCandidate(scores, id, weight) {
+  const normalized = normalizeAgentId(id);
+  if (!normalized) return;
+  scores.set(normalized, (scores.get(normalized) || 0) + weight);
+}
+
+function scanWorkspaceFile(scores, file, weight) {
+  if (!file || !fs.existsSync(file)) return;
+  const normalized = file.replace(/\\\\/g, "/");
+  const workspaceMatch = normalized.match(/\/workspace\/([^/]+)\/(?:USER|SOUL)\.md$/i);
+  if (workspaceMatch) addCandidate(scores, workspaceMatch[1], weight);
+  if (/\/workspace\/(?:USER|SOUL)\.md$/i.test(normalized)) addCandidate(scores, "main", weight);
+  const legacyMatch = normalized.match(/\/workspace-([^/]+)\/(?:USER|SOUL)\.md$/i);
+  if (legacyMatch) addCandidate(scores, legacyMatch[1], weight);
+  if (/\/workspace-main\/(?:USER|SOUL)\.md$/i.test(normalized)) addCandidate(scores, "main", weight);
+  try {
+    addCandidate(scores, parseAgentHint(fs.readFileSync(file, "utf8")), weight + 3);
+  } catch {}
+}
+
+const openclawHome = process.env.OPENCLAW_HOME || path.join(process.env.HOME || "", ".openclaw");
+const configPath = process.env.OPENCLAW_CONFIG || path.join(openclawHome, "openclaw.json");
+const cfg = readJson(configPath);
+const scores = new Map();
+
+const agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
+const agentList = Array.isArray(agents.list) ? agents.list : [];
+for (const item of agentList) addCandidate(scores, typeof item === "string" ? item : item && item.id, 2);
+
+const channel = cfg.channels && cfg.channels.dbim_mqtt && typeof cfg.channels.dbim_mqtt === "object" ? cfg.channels.dbim_mqtt : {};
+const instances = Array.isArray(channel.instances) ? channel.instances : [];
+for (const item of instances) {
+  if (!item || typeof item !== "object") continue;
+  addCandidate(scores, item.localAgentId, 6);
+  addCandidate(scores, item.agentId, 5);
+  scanWorkspaceFile(scores, item.userProfileFile, 6);
+}
+
+const workspaceRoot = path.join(openclawHome, "workspace");
+if (fs.existsSync(path.join(workspaceRoot, "USER.md"))) scanWorkspaceFile(scores, path.join(workspaceRoot, "USER.md"), 4);
+if (fs.existsSync(path.join(workspaceRoot, "SOUL.md"))) scanWorkspaceFile(scores, path.join(workspaceRoot, "SOUL.md"), 4);
+if (fs.existsSync(workspaceRoot)) {
+  for (const entry of fs.readdirSync(workspaceRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    scanWorkspaceFile(scores, path.join(workspaceRoot, entry.name, "USER.md"), 5);
+    scanWorkspaceFile(scores, path.join(workspaceRoot, entry.name, "SOUL.md"), 5);
+  }
+}
+for (const entry of fs.readdirSync(openclawHome, { withFileTypes: true })) {
+  if (!entry.isDirectory() || !entry.name.startsWith("workspace-")) continue;
+  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "USER.md"), 4);
+  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "SOUL.md"), 4);
+}
+
+const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+if (ranked.length === 1) {
+  process.stdout.write(ranked[0][0]);
+  process.exit(0);
+}
+if (ranked.length >= 2 && ranked[0][1] > ranked[1][1]) {
+  process.stdout.write(ranked[0][0]);
+}
+NODE
+  )"
+  AGENT_ID="$(printf '%s' "$AGENT_ID" | tr -d '\r\n')"
+  if [ -z "$AGENT_ID" ]; then
+    echo "无法自动推断 AGENT_ID；请显式传 AGENT_ID=<本机OpenClaw短agent id>，例如 AGENT_ID=mia。" >&2
     exit 2
   fi
+  echo "已自动推断 AGENT_ID=$AGENT_ID"
 fi
 
 if printf '%s' "$AGENT_ID" | grep -q ':'; then
@@ -1358,12 +1494,58 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+detect_workspace_dir() {
+  local short_id="$1"
+  if [ "$short_id" = "main" ]; then
+    if [ -d "$OPENCLAW_HOME/workspace" ]; then
+      printf '%s\n' "$OPENCLAW_HOME/workspace"
+      return
+    fi
+    if [ -d "$OPENCLAW_HOME/workspace-main" ]; then
+      printf '%s\n' "$OPENCLAW_HOME/workspace-main"
+      return
+    fi
+    printf '%s\n' "$OPENCLAW_HOME/workspace"
+    return
+  fi
+  if [ -d "$OPENCLAW_HOME/workspace/$short_id" ]; then
+    printf '%s\n' "$OPENCLAW_HOME/workspace/$short_id"
+    return
+  fi
+  if [ -d "$OPENCLAW_HOME/workspace-$short_id" ]; then
+    printf '%s\n' "$OPENCLAW_HOME/workspace-$short_id"
+    return
+  fi
+  printf '%s\n' "$OPENCLAW_HOME/workspace/$short_id"
+}
+
+detect_openclaw_command() {
+  if command -v openclaw >/dev/null 2>&1; then
+    command -v openclaw
+    return
+  fi
+  for candidate in \
+    "$HOME/.npm-global/bin/openclaw" \
+    "$HOME/.local/bin/openclaw" \
+    "/opt/openclaw/.npm-global/bin/openclaw" \
+    "/usr/local/bin/openclaw" \
+    "/usr/bin/openclaw"
+  do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  printf '%s\n' "openclaw"
+}
+
 INSTANCE_DIR="$CHANNEL_DIR/$AGENT_ID"
-WORKSPACE_DIR="$OPENCLAW_HOME/workspace-$AGENT_ID"
+WORKSPACE_DIR="$(detect_workspace_dir "$AGENT_ID")"
 WORKSPACE_REPORT_DIR="$WORKSPACE_DIR/.agent-link"
 WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_DIR/install-result.json"
 HOST_REPORT_FILE="$INSTANCE_DIR/install-result.json"
 USER_MD_FILE="$WORKSPACE_DIR/USER.md"
+OPENCLAW_COMMAND="$(detect_openclaw_command)"
 
 mkdir -p "$OPENCLAW_HOME/plugins" "$CHANNEL_DIR" "$INSTANCE_DIR" "$WORKSPACE_REPORT_DIR"
 
@@ -1392,7 +1574,7 @@ const payload = {
 for (const file of [process.env.WORKSPACE_REPORT_FILE, process.env.HOST_REPORT_FILE]) {
   if (!file) continue;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\\n", "utf8");
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\n", "utf8");
 }
 NODE
 }
@@ -1454,10 +1636,10 @@ mkdir -p "$(dirname "$OPENCLAW_CONFIG")"
 if [ -f "$OPENCLAW_CONFIG" ]; then
   cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%Y%m%d%H%M%S)"
 else
-  printf '{}\\n' > "$OPENCLAW_CONFIG"
+  printf '{}\n' > "$OPENCLAW_CONFIG"
 fi
 
-export AGENT_ID CONNECT_URL OPENCLAW_CONFIG PLUGIN_DIR CHANNEL_DIR
+export AGENT_ID CONNECT_URL OPENCLAW_CONFIG PLUGIN_DIR CHANNEL_DIR USER_MD_FILE OPENCLAW_COMMAND
 node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
@@ -1467,6 +1649,8 @@ const channelDir = process.env.CHANNEL_DIR;
 const agentId = process.env.AGENT_ID;
 const shortAgentId = String(agentId).split(":").pop();
 const connectUrl = process.env.CONNECT_URL;
+const userMdFile = process.env.USER_MD_FILE;
+const openClawCommand = process.env.OPENCLAW_COMMAND;
 if (!agentId) throw new Error("AGENT_ID 不能为空");
 
 function readJson(file) {
@@ -1494,6 +1678,12 @@ cfg.plugins.entries["dbim-mqtt"] = {
   enabled: true,
 };
 
+cfg.agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
+cfg.agents.list = Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+if (!cfg.agents.list.some((item) => item && item.id === shortAgentId)) {
+  cfg.agents.list.push({ id: shortAgentId });
+}
+
 cfg.channels = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
 cfg.channels.dbim_mqtt = cfg.channels.dbim_mqtt && typeof cfg.channels.dbim_mqtt === "object" ? cfg.channels.dbim_mqtt : {};
 cfg.channels.dbim_mqtt.enabled = true;
@@ -1506,34 +1696,56 @@ const nextInstance = {
   localAgentId: shortAgentId,
   agentId,
   connectUrl,
-  connectUrlFile: path.join(instanceDir, "connect-url.txt"),
-  userProfileFile: path.join(process.env.HOME || "", ".openclaw", `workspace-${shortAgentId}`, "USER.md"),
+  userProfileFile: userMdFile,
   stateFile: path.join(instanceDir, "state.json"),
 };
+delete nextInstance.connectUrlFile;
+if (openClawCommand) nextInstance.openClawCommand = openClawCommand;
 const rawInstances = Array.isArray(cfg.channels.dbim_mqtt.instances) ? cfg.channels.dbim_mqtt.instances : [];
 cfg.channels.dbim_mqtt.instances = rawInstances
   .filter((item) => item && item.localAgentId !== shortAgentId && item.agentId !== agentId)
   .concat([nextInstance]);
 
-fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\\n", "utf8");
+fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
 fs.mkdirSync(instanceDir, { recursive: true });
-fs.writeFileSync(path.join(instanceDir, "connect-url.txt"), connectUrl + "\\n", "utf8");
+
+const sessionFile = path.join(process.env.HOME || "", ".openclaw", "agents", shortAgentId, "sessions", "sessions.json");
+try {
+  if (fs.existsSync(sessionFile)) {
+    const sessions = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+    const defaultKey = `agent:${shortAgentId}:main`;
+    const bound = sessions[defaultKey];
+    if (bound && typeof bound.sessionId === "string" && bound.sessionId.includes(":")) {
+      delete sessions[defaultKey];
+      fs.writeFileSync(sessionFile, JSON.stringify(sessions, null, 2) + "\n", "utf8");
+    }
+  }
+} catch (err) {
+  console.warn(`清理旧 session 绑定失败：${err.message}`);
+}
 NODE
 
 write_install_result "running" "config_written" "插件已安装，配置已写入，等待 Gateway 重启"
 echo "dbim-mqtt 插件已安装并写入 OpenClaw 配置：$OPENCLAW_CONFIG"
 
+CHECKER_LOG_FILE="$WORKSPACE_REPORT_DIR/install-check.log"
+RESTART_MODE="manual"
 if command -v systemctl >/dev/null 2>&1 && systemctl --user list-unit-files openclaw-gateway.service >/dev/null 2>&1; then
-  CHECKER_LOG_FILE="$WORKSPACE_REPORT_DIR/install-check.log"
-  nohup env \
-    AGENT_ID="$AGENT_ID" \
-    CONNECT_URL="$CONNECT_URL" \
-    WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_FILE" \
-    HOST_REPORT_FILE="$HOST_REPORT_FILE" \
-    USER_MD_FILE="$USER_MD_FILE" \
-    INSTANCE_DIR="$INSTANCE_DIR" \
-    INSTALL_REPORT_URL="$INSTALL_REPORT_URL" \
-    bash <<'BASH' >"$CHECKER_LOG_FILE" 2>&1 &
+  RESTART_MODE="systemd"
+fi
+
+nohup env \
+  AGENT_ID="$AGENT_ID" \
+  CONNECT_URL="$CONNECT_URL" \
+  WORKSPACE_REPORT_FILE="$WORKSPACE_REPORT_FILE" \
+  HOST_REPORT_FILE="$HOST_REPORT_FILE" \
+  USER_MD_FILE="$USER_MD_FILE" \
+  INSTANCE_DIR="$INSTANCE_DIR" \
+  INSTALL_REPORT_URL="$INSTALL_REPORT_URL" \
+  OPENCLAW_HOME="$OPENCLAW_HOME" \
+  OPENCLAW_COMMAND="$OPENCLAW_COMMAND" \
+  RESTART_MODE="$RESTART_MODE" \
+  bash <<'BASH' >"$CHECKER_LOG_FILE" 2>&1 &
 set -euo pipefail
 
 write_result() {
@@ -1560,7 +1772,7 @@ const payload = {
 for (const file of [process.env.WORKSPACE_REPORT_FILE, process.env.HOST_REPORT_FILE]) {
   if (!file) continue;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\\n", "utf8");
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2) + "\n", "utf8");
 }
 NODE
 }
@@ -1598,10 +1810,33 @@ NODE
 }
 
 sleep 2
-systemctl --user restart openclaw-gateway.service
+if [ "${RESTART_MODE:-manual}" = "systemd" ]; then
+  systemctl --user restart openclaw-gateway.service
+else
+  if [ -z "${OPENCLAW_COMMAND:-}" ]; then
+    write_result failed gateway_restart_missing "缺少 OPENCLAW_COMMAND，无法手动启动 Gateway"
+    report_result failed gateway_restart_missing "缺少 OPENCLAW_COMMAND，无法手动启动 Gateway"
+    exit 1
+  fi
+  mkdir -p "$OPENCLAW_HOME/logs"
+  GATEWAY_LOG_FILE="$OPENCLAW_HOME/logs/gateway.manual.log"
+  GATEWAY_PID_FILE="$OPENCLAW_HOME/logs/gateway.manual.pid"
+  nohup "$OPENCLAW_COMMAND" gateway run --force >"$GATEWAY_LOG_FILE" 2>&1 </dev/null &
+  echo $! >"$GATEWAY_PID_FILE"
+fi
 attempts=40
 while [ "$attempts" -gt 0 ]; do
-  if systemctl --user is-active openclaw-gateway.service >/dev/null 2>&1 && [ -f "$INSTANCE_DIR/state.json" ]; then
+  gateway_running="false"
+  if [ "${RESTART_MODE:-manual}" = "systemd" ]; then
+    if systemctl --user is-active openclaw-gateway.service >/dev/null 2>&1; then
+      gateway_running="true"
+    fi
+  else
+    if [ -f "$OPENCLAW_HOME/logs/gateway.manual.pid" ] && kill -0 "$(cat "$OPENCLAW_HOME/logs/gateway.manual.pid")" >/dev/null 2>&1; then
+      gateway_running="true"
+    fi
+  fi
+  if [ "$gateway_running" = "true" ] && [ -f "$INSTANCE_DIR/state.json" ]; then
     if node -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.exit(data.status==="online" ? 0 : 1);' "$INSTANCE_DIR/state.json"; then
       write_result success install_online "Agent Link 安装完成，插件已在线"
       report_result success install_online "Agent Link 安装完成，插件已在线"
@@ -1619,11 +1854,13 @@ fi
 write_result failed install_timeout "等待 Agent Link 在线超时" "$detail"
 report_result failed install_timeout "等待 Agent Link 在线超时" "$detail"
 BASH
+
+if [ "$RESTART_MODE" = "systemd" ]; then
   echo "openclaw-gateway.service 将在 2 秒后异步重启；后台检查器会把结果写入：$WORKSPACE_REPORT_FILE"
 else
-  write_install_result failed gateway_restart_missing "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway"
-  report_install_result failed gateway_restart_missing "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway"
-  echo "未找到 openclaw-gateway.service，请手动重启 OpenClaw Gateway。"
+  write_install_result running gateway_restart_manual "未找到 openclaw-gateway.service，正在手动重启 OpenClaw Gateway"
+  report_install_result running gateway_restart_manual "未找到 openclaw-gateway.service，正在手动重启 OpenClaw Gateway"
+  echo "未找到 openclaw-gateway.service；正在手动拉起 OpenClaw Gateway。后台检查器会把结果写入：$WORKSPACE_REPORT_FILE"
 fi
 
 echo "安装结果文件：$WORKSPACE_REPORT_FILE"
@@ -1656,11 +1893,11 @@ CONNECT_URL="{urls["public_connect_url"]}" \\
 curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 ```
 
-5. 安装脚本会异步重启 OpenClaw Gateway。当前会话可能短暂中断或显示 SIGTERM，这是预期现象；不要把它当成安装失败。
-6. 优先读取 workspace 里的安装结果镜像。把 `<local-agent-id>` 替换成当前 agent 短 id；如果你要让同一个 OpenClaw Gateway 继续接另一个 agent，再重复执行一次安装命令即可：
+5. 安装脚本会异步重启 OpenClaw Gateway。当前会话可能短暂中断或显示 SIGTERM，这是预期现象；不要把它当成安装失败。若本机没有 `openclaw-gateway.service`，脚本会退回到手动拉起 `openclaw gateway run --force`。
+6. 优先读取 workspace 里的安装结果镜像。把 `<local-agent-id>` 替换成当前 agent 短 id；如果你要让同一个 OpenClaw Gateway 继续接另一个 agent，再重复执行一次安装命令即可。如果脚本提示正在手动重启 Gateway，也不要停，继续等待并读取这个结果文件：
 
 ```bash
-cat ~/.openclaw/workspace-<local-agent-id>/.agent-link/install-result.json
+cat ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 ```
 
 7. 如果 `install-result.json` 显示 `status=success` 或其中 `state.status=online`，请给主人报告：本机 agent id、平台 agent id、插件版本、tenantId、MQTT topic、结果文件路径。

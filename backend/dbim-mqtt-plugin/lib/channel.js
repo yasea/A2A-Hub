@@ -1,7 +1,6 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
-const crypto = require("node:crypto");
 const { AgentLinkCoreRuntime } = require("./agent-link-core/runtime");
 const { OpenClawSessionRecorder } = require("./openclaw-session-recorder");
 const { shortAgentId } = require("./owner-profile");
@@ -111,12 +110,12 @@ class DbimMqttChannel {
 
   async runOpenClawAgent(payload) {
     const message = this.resolveTaskInputText(payload);
+    // Let the OpenClaw CLI create a valid session ID itself. Older dbim-mqtt
+    // releases generated IDs that newer runtimes reject.
     const args = [
       "agent",
       "--agent",
       shortAgentId(this.config.agentId),
-      "--session-id",
-      this.buildOpenClawSessionId(payload),
       "--local",
       "--json",
       "--timeout",
@@ -187,18 +186,6 @@ class DbimMqttChannel {
     const text = String(payload?.input_text || payload?.message_text || "").trim();
     if (!text) throw new Error("task.dispatch 缺少 input_text，无法交给 OpenClaw agent 处理");
     return text;
-  }
-
-  buildOpenClawSessionId(payload) {
-    const raw = [
-      "dbim",
-      shortAgentId(this.config.agentId),
-      String(payload?.tenant_id || "tenant"),
-      String(payload?.context_id || payload?.task_id || "context"),
-    ].join(":");
-    const normalized = raw.replace(/[^a-zA-Z0-9._:-]+/g, "_");
-    if (normalized.length <= 120) return normalized;
-    return `dbim:${crypto.createHash("sha1").update(raw).digest("hex")}`;
   }
 
   parseOpenClawJson(text) {

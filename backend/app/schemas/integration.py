@@ -106,6 +106,7 @@ class MeteringSummaryItem(BaseModel):
 class OpenClawAgentRegisterRequest(BaseModel):
     agent_id: str
     display_name: str
+    agent_summary: str | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     config_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -113,6 +114,7 @@ class OpenClawAgentRegisterRequest(BaseModel):
 class OpenClawAgentRegistrationResponse(BaseModel):
     agent_id: str
     tenant_id: str
+    agent_summary: str | None = None
     auth_token: str
     ws_url: str
     onboarding_url: str
@@ -176,6 +178,7 @@ class AgentLinkSelfRegisterRequest(BaseModel):
 
     agent_id: str
     display_name: str | None = None
+    agent_summary: str | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     config_json: dict[str, Any] = Field(default_factory=dict)
     owner_profile: dict[str, Any] = Field(default_factory=dict)

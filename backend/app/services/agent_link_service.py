@@ -15,6 +15,7 @@ from app.core.redis_client import get_redis
 from app.core.security import create_access_token
 from app.models.task import Task
 from app.services.error_event_service import ErrorEventService
+from app.services.mqtt_auth import tenant_mqtt_password, tenant_mqtt_username
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +115,9 @@ class AgentLinkService:
         safe_agent = agent_id.replace(":", "_")
         return f"a2a_{tenant_id}_{safe_agent}"
 
-    def transport_payload(self, tenant_id: str, agent_id: str, auth_token: str) -> dict[str, Any]:
-        mqtt_username = settings.MQTT_SHARED_USERNAME or agent_id
-        mqtt_password = settings.MQTT_SHARED_PASSWORD or auth_token
+    def transport_payload(self, tenant_id: str, agent_id: str, _auth_token: str) -> dict[str, Any]:
+        mqtt_username = tenant_mqtt_username(tenant_id)
+        mqtt_password = tenant_mqtt_password(tenant_id)
         return {
             "transport": settings.AGENT_LINK_TRANSPORT,
             "mqtt_broker_url": settings.MQTT_PUBLIC_BROKER_URL or settings.MQTT_BROKER_URL,
@@ -221,8 +222,8 @@ class AgentLinkService:
                 ok = await self.publisher.publish(
                     self.command_topic(tenant_id, agent_id),
                     payload,
-                    username=(settings.MQTT_SHARED_USERNAME or agent_id),
-                    password=(settings.MQTT_SHARED_PASSWORD or auth_token),
+                    username=tenant_mqtt_username(tenant_id),
+                    password=tenant_mqtt_password(tenant_id),
                 )
                 if not ok:
                     await ErrorEventService.record_out_of_band(

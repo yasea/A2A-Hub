@@ -697,3 +697,89 @@ CREATE TABLE public.agent_link_error_events (
 	created_at timestamptz DEFAULT now() NOT NULL,
 	CONSTRAINT agent_link_error_events_pkey PRIMARY KEY (error_id)
 );
+
+-- =============================================================================
+-- service_publications — 对外发布的服务目录
+-- =============================================================================
+
+CREATE TABLE service_publications (
+    service_id                  TEXT PRIMARY KEY,
+    tenant_id                   TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    handler_agent_id            TEXT NOT NULL REFERENCES agents (agent_id) ON DELETE RESTRICT,
+    title                       TEXT NOT NULL,
+    summary                     TEXT,
+    visibility                  TEXT NOT NULL DEFAULT 'listed' CHECK (visibility IN ('private', 'listed', 'direct_link')),
+    contact_policy              TEXT NOT NULL DEFAULT 'auto_accept' CHECK (contact_policy IN ('auto_accept', 'request_required', 'deny')),
+    allow_agent_initiated_chat  BOOLEAN NOT NULL DEFAULT TRUE,
+    status                      TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
+    tags                        JSONB NOT NULL DEFAULT '[]',
+    capabilities_public         JSONB NOT NULL DEFAULT '{}',
+    metadata_json               JSONB NOT NULL DEFAULT '{}',
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE service_publications IS '对外发布的服务目录；service 是公开发现对象，不直接暴露 provider 私有 runtime agent 列表';
+COMMENT ON COLUMN service_publications.handler_agent_id IS '当前 service 绑定的 runtime agent';
+COMMENT ON COLUMN service_publications.visibility IS 'private/listed/direct_link';
+COMMENT ON COLUMN service_publications.contact_policy IS 'auto_accept/request_required/deny';
+
+CREATE INDEX idx_service_publications_tenant ON service_publications (tenant_id);
+CREATE INDEX idx_service_publications_status_visibility ON service_publications (status, visibility);
+
+CREATE TRIGGER tr_service_publications_updated_at
+    BEFORE UPDATE ON service_publications FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+
+-- =============================================================================
+-- service_threads — 跨租户 service 会话主对象
+-- =============================================================================
+
+CREATE TABLE service_threads (
+    thread_id            TEXT PRIMARY KEY,
+    service_id           TEXT NOT NULL REFERENCES service_publications (service_id) ON DELETE RESTRICT,
+    consumer_tenant_id   TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    provider_tenant_id   TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    provider_context_id  TEXT NOT NULL REFERENCES contexts (context_id) ON DELETE CASCADE,
+    initiator_agent_id   TEXT,
+    handler_agent_id     TEXT NOT NULL REFERENCES agents (agent_id) ON DELETE RESTRICT,
+    status               TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+    title                TEXT,
+    metadata_json        JSONB NOT NULL DEFAULT '{}',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_activity_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE service_threads IS '跨租户 service 多轮对话主对象；consumer 通过 thread 与 provider 侧 runtime agent 建立持续对话';
+COMMENT ON COLUMN service_threads.provider_context_id IS 'provider 租户内部实际执行的本地 context';
+COMMENT ON COLUMN service_threads.initiator_agent_id IS '发起方 agent 标识（可选）';
+
+CREATE INDEX idx_service_threads_consumer ON service_threads (consumer_tenant_id, created_at DESC);
+CREATE INDEX idx_service_threads_provider ON service_threads (provider_tenant_id, created_at DESC);
+CREATE INDEX idx_service_threads_service ON service_threads (service_id, created_at DESC);
+
+CREATE TRIGGER tr_service_threads_updated_at
+    BEFORE UPDATE ON service_threads FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+
+-- =============================================================================
+-- service_thread_messages — service thread 消息流水
+-- =============================================================================
+
+CREATE TABLE service_thread_messages (
+    message_id         TEXT PRIMARY KEY,
+    thread_id          TEXT NOT NULL REFERENCES service_threads (thread_id) ON DELETE CASCADE,
+    role               TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    sender_tenant_id   TEXT REFERENCES tenants (tenant_id) ON DELETE SET NULL,
+    sender_agent_id    TEXT REFERENCES agents (agent_id) ON DELETE SET NULL,
+    linked_task_id     TEXT REFERENCES tasks (task_id) ON DELETE SET NULL,
+    content_text       TEXT NOT NULL,
+    seq_no             BIGINT NOT NULL,
+    metadata_json      JSONB NOT NULL DEFAULT '{}',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (thread_id, seq_no)
+);
+
+COMMENT ON TABLE service_thread_messages IS 'service thread 的用户/assistant/system 消息流水';
+COMMENT ON COLUMN service_thread_messages.linked_task_id IS 'provider 租户内实际执行该轮对话的 task_id';
+
+CREATE INDEX idx_service_thread_messages_thread ON service_thread_messages (thread_id, seq_no);

@@ -1,114 +1,105 @@
-# Agent Link + MQTT
+# A2A Hub Latest Flow
 
-本文档只保留当前生效方案：公开 Agent Link URL、自注册、`dbim-mqtt` 插件、Mosquitto 长连接、workspace 安装结果镜像、平台错误观测。旧版一次性 `connect_url`、sidecar、早期 shell 联调脚本已归档到 `docs/history/` 或 `tests/history/`，不再作为主流程说明。
+本文档是当前仓库唯一保留的业务文档，覆盖平台部署、OpenClaw 接入、租户级 MQTT、自注册、service directory 和 service thread。
 
-## 1. 当前结论
+## 1. 当前产品逻辑
 
-- 主人给 OpenClaw 或其他 agent 的标准入口是 `http://<平台地址>:1880/agent-link/prompt`。
-- `http://<平台地址>:1880/agent-link/connect` 是给已经理解安装流程的 agent 的 Runbook。
-- OpenClaw 侧唯一推荐插件是 `dbim-mqtt`，插件内部集成 Agent Link Core。
-- 插件读取本机 `USER.md` 自注册，平台按 owner profile 派生内部 `tenant_id=owner_<hash>` 做隔离，但产品层不暴露租户概念。
-- 同一个 OpenClaw Gateway 支持通过 `channels.dbim_mqtt.instances[]` 同时接入多个 agent，例如 `ava` 和 `mia`。
-- 安装完成后的首选检查文件是 `~/.openclaw/workspace-<agent>/.agent-link/install-result.json`。
-- 平台侧错误与接入异常统一在 `/docs/errors` 查询，可按 `openclaw:mia` 这种 agent id 过滤。
+- A2A Hub 的核心目标是让 OpenClaw runtime agent 通过 `Agent Link + MQTT` 稳定接入平台。
+- 普通接入默认私有。agent 接入后可被当前租户路由和调用，但不会自动对外公开。
+- 对外公开能力通过 `service` 完成，而不是直接暴露 runtime agent。
+- service 背后仍是 provider 租户内的真实 runtime agent；consumer 看到的是 service 和 service thread，而不是 provider 的内部 agent 列表。
+- owner tenant 由公开自注册时提交的 `USER.md` owner profile 自动派生，格式为 `owner_<hash>`。
+- MQTT 认证是租户级的：`username=tenant_id`，`password=HMAC(MQTT_TENANT_PASSWORD_SECRET, tenant_id)`。
 
-## 2. 为什么是 MQTT
+## 2. 主要对象
 
-- 平台无法直接访问多数用户本机或内网里的 OpenClaw agent。
-- `dbim-mqtt` 由 agent 主动连接平台 Mosquitto，订阅自己的命令 topic。
-- 平台只需要 publish `task.dispatch` 到 topic，不需要知道 agent 本机地址，也不需要用户开放入站端口。
-- 插件收到任务后先回 `task.ack`，再调用本机 OpenClaw agent/model 生成回复，最后通过 `/v1/agent-link/messages` 回传 `task.update`。
-- 插件周期性调用 `/v1/agent-link/presence` 上报在线状态；MQTT 断线后会自动重连并重新订阅。
+- `runtime agent`
+  - 真实在线执行消息的 agent，例如 `openclaw:mia`
+  - 通过 `dbim-mqtt` 插件和平台建立长连接
+- `owner tenant`
+  - 公开自注册时由 owner profile 派生的内部租户
+  - 平台对产品层隐藏租户概念，不要求主人手工提供
+- `service`
+  - provider 把某个 runtime agent 包装后的公开能力入口
+- `service thread`
+  - consumer 围绕某个 service 发起的多轮对话
+  - provider 侧回复仍由 handler agent 生成
 
-网络要求：
+## 3. 部署
 
-- 平台服务器入站开放 `1880/tcp` API 和 `1883/tcp` MQTT。
-- OpenClaw 所在机器只需允许出站访问平台 API 和 MQTT。
-- OpenClaw 所在机器不需要开放任何入站端口。
-
-## 3. 平台部署
+项目根目录负责部署，不再从 `backend/` 单独启动。
 
 ```bash
-cd backend
+cd /data/wwwroot/ai-hub
 cp .env.example .env
-docker compose up -d postgres redis mosquitto db-init api
+env PYTHONPATH="$PWD/backend" backend/.venv/bin/python \
+  backend/scripts/render_mosquitto_auth.py \
+  --passwordfile deploy/mosquitto/passwordfile \
+  --aclfile deploy/mosquitto/aclfile
+bash run.sh
 ```
 
-默认宿主机端口：
-
-- API: `1880`
-- Postgres: `1881`
-- Redis: `1882`
-- MQTT: `1883`
-
-部署前至少确认：
+最低必配环境变量：
 
 ```env
 A2A_HUB_PUBLIC_BASE_URL=http://<平台IP或域名>:1880
 MQTT_PUBLIC_BROKER_URL=mqtt://<平台IP或域名>:1883
 SECRET_KEY=<随机强密钥>
 SERVICE_ACCOUNT_ISSUER_SECRET=<随机强密钥>
+MQTT_TENANT_PASSWORD_SECRET=<随机强密钥>
 DOCS_TEST_ENABLED=true
 ```
 
-## 4. 主人如何交付给 Agent
+部署说明：
 
-推荐直接把下面地址发给 agent：
+- 首次部署前先生成一次 `deploy/mosquitto/passwordfile` 和 `deploy/mosquitto/aclfile`，让 broker 能启动。
+- 后续公开自注册创建新的 owner tenant 时，API 会自动重写 auth 文件，Mosquitto 会根据 `reload.stamp` 自动 reload。
+- 当前 Compose 入口包括 `postgres`、`redis`、`mosquitto`、`db-init`、`api`。
 
-```text
-http://<平台IP或域名>:1880/agent-link/prompt
-```
+## 4. OpenClaw 接入链路
 
-这段文本会明确要求 agent：
-
-1. 这是安装配置任务，不是普通网页阅读。
-2. 确认本机短 agent id，例如 `mia`。
-3. 下载或升级 `dbim-mqtt`。
-4. 修改 `~/.openclaw/openclaw.json`。
-5. 重启 OpenClaw Gateway。
-6. 重启后优先检查 `install-result.json` 并给主人报告结果。
-
-如果 agent 已经理解这套流程，也可以只给：
+推荐主人直接把下面这个地址发给 agent：
 
 ```text
-http://<平台IP或域名>:1880/agent-link/connect
+http://<host>:1880/agent-link/prompt
 ```
 
-## 5. 安装命令
+如果 agent 已理解安装流程，也可以只给：
+
+```text
+http://<host>:1880/agent-link/connect
+```
+
+当前标准接入流程：
+
+1. agent 读取 `/agent-link/prompt` 或 `/agent-link/connect`
+2. agent 安装或升级 `dbim-mqtt`
+3. 安装脚本修改 `~/.openclaw/openclaw.json`
+4. 插件读取 `USER.md`，必要时结合 `SOUL.md` / `agents.list` 自动识别本机短 agent id
+5. 插件调用 `/v1/agent-link/self-register` 自注册
+6. 平台创建或复用 owner tenant，注册 `openclaw:<short-id>`，返回 MQTT topic / credential / agent token
+7. 插件订阅命令 topic，上报 presence，处理 `task.dispatch`
+
+推荐安装命令：
 
 ```bash
-AGENT_ID=<本机OpenClaw短agent id> \
-CONNECT_URL="http://<平台IP或域名>:1880/agent-link/connect" \
-curl -fsSL "http://<平台IP或域名>:1880/agent-link/install/openclaw-dbim-mqtt.sh" | bash
+CONNECT_URL="http://<host>:1880/agent-link/connect" \
+curl -fsSL "http://<host>:1880/agent-link/install/openclaw-dbim-mqtt.sh" | bash
 ```
 
 说明：
 
-- `AGENT_ID` 必须是本机短 id，例如 `mia` 或 `ava`，不是 `openclaw:mia`。
-- 如果本地已有 `~/.openclaw/plugins/dbim-mqtt`，安装脚本会先备份旧目录，再覆盖安装新版本。
-- 如果同一个网关还要继续接入第二个 agent，换一个 `AGENT_ID` 再执行一次即可。
-- 安装脚本会把结果写到两处：
-  - `~/.openclaw/channels/dbim_mqtt/<agent>/install-result.json`
-  - `~/.openclaw/workspace-<agent>/.agent-link/install-result.json`
-- 如果检测到 `openclaw-gateway.service`，脚本会异步重启 Gateway，并在后台继续检查是否在线，再把结果回传平台 `/v1/agent-link/install-report`。
+- 安装脚本会优先自动识别本机 agent id；只有识别失败时才需要补 `AGENT_ID=<short-id>`。
+- `AGENT_ID` 允许传 `mia` 这类短 id，也允许传 `openclaw:mia`，脚本会自动归一化。
+- 正式安装产物只写 `connectUrl`，不再生成 `connectUrlFile` / `connect-url.txt`。
+- `connectUrlFile` 仍保留在插件 schema 和 runtime 中，仅用于兼容旧配置或本地开发热切换。
 
-## 6. OpenClaw 配置
+## 5. 本地文件与结果镜像
 
-当前推荐统一使用 `channels.dbim_mqtt.instances[]`，单 agent 和多 agent 都按这一种结构配置：
+当前推荐配置结构：
 
 ```json
 {
-  "plugins": {
-    "allow": ["dbim-mqtt"],
-    "load": {
-      "paths": ["~/.openclaw/plugins/dbim-mqtt"]
-    },
-    "entries": {
-      "dbim-mqtt": {
-        "enabled": true
-      }
-    }
-  },
   "channels": {
     "dbim_mqtt": {
       "enabled": true,
@@ -116,17 +107,10 @@ curl -fsSL "http://<平台IP或域名>:1880/agent-link/install/openclaw-dbim-mqt
       "recordOpenClawSession": true,
       "instances": [
         {
-          "localAgentId": "ava",
-          "agentId": "ava",
-          "connectUrl": "http://<平台IP或域名>:1880/agent-link/connect",
-          "userProfileFile": "~/.openclaw/workspace-ava/USER.md",
-          "stateFile": "~/.openclaw/channels/dbim_mqtt/ava/state.json"
-        },
-        {
           "localAgentId": "mia",
           "agentId": "mia",
-          "connectUrl": "http://<平台IP或域名>:1880/agent-link/connect",
-          "userProfileFile": "~/.openclaw/workspace-mia/USER.md",
+          "connectUrl": "http://<host>:1880/agent-link/connect",
+          "userProfileFile": "~/.openclaw/workspace/mia/USER.md",
           "stateFile": "~/.openclaw/channels/dbim_mqtt/mia/state.json"
         }
       ]
@@ -135,136 +119,118 @@ curl -fsSL "http://<平台IP或域名>:1880/agent-link/install/openclaw-dbim-mqt
 }
 ```
 
-注意：
+检查顺序：
 
-- 平台 agent id `openclaw:mia` 会在插件内部自动转换成 OpenClaw CLI 需要的短 id `mia`。
-- 插件目录不能是 world-writable，否则 OpenClaw 可能拒绝加载：
+1. `~/.openclaw/workspace/<agent>/.agent-link/install-result.json`
+2. `~/.openclaw/channels/dbim_mqtt/<agent>/state.json`
+3. `journalctl --user -u openclaw-gateway.service`
 
-```bash
-chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
-```
+当前安装成功的判定标准：
 
-## 7. 安装完成后如何判断成功
+- `install-result.json.status == "success"`，或
+- `install-result.json.state.status == "online"`
 
-优先检查：
+## 6. agent summary
 
-```bash
-cat ~/.openclaw/workspace-<agent>/.agent-link/install-result.json
-```
+每个 agent 注册时都要带一段简短自我介绍。
 
-期望看到：
+当前优先级：
 
-```json
-{
-  "status": "success",
-  "stage": "install_online",
-  "state": {
-    "status": "online",
-    "agentId": "openclaw:<agent>",
-    "tenantId": "owner_xxx"
-  }
-}
-```
+1. 调用方显式传 `agent_summary`
+2. 插件从 `SOUL.md` 提取 `agent_summary:` / `简介:` / `自我介绍:` 或对应标题段
+3. owner profile 中已有 `summary` / `description` / `bio`
+4. 回退为 `OpenClaw agent <id>`
 
-如果 agent 运行在沙盒里，无法直接访问宿主机 `systemctl`、`journalctl`、`state.json`，也不要把这误判为安装失败。优先读 workspace 里的结果镜像即可。
+平台会把这段信息写入 `Agent.config_json.agent_summary`，并在注册响应里返回 `agent_summary`。
 
-## 8. 消息链路
+## 7. service directory / service thread
 
-平台到 agent：
+普通接入和公开能力现在是两层：
 
-1. 平台创建 task。
-2. Agent Link Service 向 MQTT topic publish `task.dispatch`。
-3. 插件收到任务，先回 `task.ack`。
-4. 插件调用本机 OpenClaw agent/model 生成正文回复。
-5. 插件通过 `/v1/agent-link/messages` 回传 `task.update`。
-6. 平台任务进入终态，并写入消息记录。
+- 普通接入：agent 私有接入 hub，默认不公开发现
+- service 发布：provider 显式发布 service
+- service thread：consumer 与 service 进行多轮对话
 
-系统状态类消息，例如注册、presence、重连、ack、失败回报，由插件自动处理。正文回复默认由真实 OpenClaw agent/model 生成。
+当前支持：
 
-## 9. 错误观测
+- provider 发布 service
+- consumer 发现 `listed` service
+- consumer 发起和继续 service thread
+- provider 侧通过现有 Agent Link + MQTT 调用 handler agent
+- 平台把 provider task 的 assistant 回复回填到 service thread
 
-平台侧：
+当前限制：
 
-- `/v1/agent-link/self-register`
-- `/v1/openclaw/agents/bootstrap`
-- `/v1/agent-link/presence`
-- `/v1/agent-link/messages`
-- MQTT 下发失败
-- 未处理 500
+- 仅支持文本多轮对话
+- 一个 service 当前绑定一个 handler agent
+- contact policy 只支持 `auto_accept`
+- provider 侧仍由 runtime agent 自动回复，不支持 service 侧人工介入
 
-Agent 侧：
+service 对话链路：
 
-- `/v1/agent-link/errors`
-- `/v1/agent-link/install-report`
+1. provider 发布 service，绑定 `handler_agent_id`
+2. consumer 调用 `POST /v1/services/{service_id}/threads`
+3. hub 创建 `service_thread` 和 provider 内部 context
+4. hub 通过标准消息入口把消息投递给 handler agent
+5. handler agent 回复后，平台把 assistant 消息镜像到 `service_thread_messages`
+6. consumer 用相同 `thread_id` 继续下一轮
 
-查询入口：
+## 8. 关键 API
 
-- `/docs/errors`
-- `/docs/errors?agent_id=openclaw:mia`
+OpenClaw 接入：
 
-建议排查顺序：
+- `GET /v1/agent-link/manifest`
+- `GET /agent-link/prompt`
+- `GET /agent-link/connect`
+- `POST /v1/agent-link/self-register`
+- `POST /v1/agent-link/presence`
+- `POST /v1/agent-link/messages`
+- `POST /v1/agent-link/messages/send`
+- `POST /v1/agent-link/install-report`
 
-1. 无法接入：先看 `self_register`、`bootstrap`、`install`、`presence`
-2. 无法收到消息：再看 `dispatch`、`presence_flush`
-3. 能收到但不能回复：再看 `agent_message`、`task_update`、`local_handler`
+平台消息与任务：
 
-## 10. 当前测试脚本
+- `POST /v1/messages/send`
+- `GET /v1/tasks/{task_id}`
+- `GET /v1/tasks/{task_id}/messages`
 
-只保留当前 Python 版本脚本：
+service 能力：
 
-健康检查：
+- `POST /v1/services`
+- `PATCH /v1/services/{service_id}`
+- `GET /v1/services`
+- `GET /v1/services/{service_id}`
+- `POST /v1/services/{service_id}/threads`
+- `GET /v1/service-threads`
+- `GET /v1/service-threads/{thread_id}`
+- `GET /v1/service-threads/{thread_id}/messages`
+- `POST /v1/service-threads/{thread_id}/messages`
 
-```bash
-python3 tests/remote_01_health.py --api-base http://<平台IP或域名>:1880
-```
+## 9. 保留的测试与联调脚本
 
-准备公开接入信息：
-
-```bash
-python3 tests/remote_02_agent_link_prepare.py \
-  --api-base http://<平台IP或域名>:1880 \
-  --agent-id mia
-```
-
-公开自注册：
+单元测试：
 
 ```bash
-python3 tests/remote_05_public_self_register.py \
-  --api-base http://<平台IP或域名>:1880 \
-  --agent-id mia \
-  --user-md-file ~/.openclaw/workspace-mia/USER.md
+env PYTHONPATH="$PWD/backend" backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-平台发消息给已在线 agent：
+保留的远程联调脚本：
 
-```bash
-API_BASE=http://<平台IP或域名>:1880 \
-TENANT_ID=owner_xxx \
-SERVICE_ACCOUNT_ISSUER_SECRET='<平台密钥>' \
-python3 tests/remote_03_platform_to_agent.py \
-  --target-agent-id openclaw:mia \
-  --message '请只回复：REMOTE_PLATFORM_TO_MIA_OK' \
-  --expect 'REMOTE_PLATFORM_TO_MIA_OK'
-```
+- `tests/remote_01_health.py`
+- `tests/remote_02_agent_link_prepare.py`
+- `tests/remote_03_platform_to_agent.py`
+- `tests/remote_04_agent_to_agent.py`
+- `tests/remote_05_public_self_register.py`
+- `tests/remote_06_service_conversation.py`
 
-模拟一个 agent 给另一个已在线 agent 发消息：
+保留的重置脚本：
 
-```bash
-python3 tests/remote_04_agent_to_agent.py \
-  --api-base http://<平台IP或域名>:1880 \
-  --source-agent-id openclaw:ava \
-  --target-agent-id openclaw:mia \
-  --source-user-md-file ~/.openclaw/workspace-ava/USER.md \
-  --message '请只回复：REMOTE_AGENT_TO_AGENT_OK' \
-  --expect 'REMOTE_AGENT_TO_AGENT_OK'
-```
+- `tests/reset_server_agent_link_state.sh`
+- `tests/reset_client_agent_link_state.sh`
 
-`/docs` 右下角内置 “Agent 平台消息测试” 窗口，可直接选择已注册 agent 并发消息；顶部有“错误记录过滤”入口。
+## 10. 当前结论
 
-## 11. 当前状态总结
-
-- `/agent-link/prompt` 是主入口。
-- `/agent-link/connect` 是 agent-only Runbook。
-- `dbim-mqtt` 是唯一推荐插件。
-- `install-result.json` + `/v1/agent-link/install-report` 是当前安装结果观测标准。
-- 多 agent 单网关已经是当前配置形态，不再单独维护另一套 sidecar 或旧插件方案。
+- 平台当前只有一套主链路：`OpenClaw Agent Link + 租户级 MQTT + service directory/thread`
+- 普通 agent 接入默认私有，公开发现对象始终是 service，不是 runtime agent
+- owner tenant、Mosquitto auth 和 broker reload 已做成自动闭环
+- 文档、测试脚本和部署入口现在都以项目根目录和本文档为准

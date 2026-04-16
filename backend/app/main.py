@@ -13,6 +13,7 @@ from app.api.routes_contexts import router as contexts_router
 from app.api.routes_integrations import router as integrations_router
 from app.api.routes_messages import router as messages_router
 from app.api.routes_routing import router as routing_router
+from app.api.routes_services import router as services_router
 from app.api.routes_service_accounts import router as service_accounts_router
 from app.api.routes_tasks import router as tasks_router
 from app.core.config import settings
@@ -58,6 +59,7 @@ app.include_router(messages_router)
 app.include_router(tasks_router)
 app.include_router(agents_router)
 app.include_router(routing_router)
+app.include_router(services_router)
 app.include_router(service_accounts_router)
 app.include_router(integrations_router)
 
@@ -196,6 +198,7 @@ async def custom_swagger_docs():
   <button id="copy-agent-onboarding">复制给 Agent 的完整指令</button>
   <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
   <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
+  <a class="secondary" id="agent-error-link" href="/docs/errors" target="_blank">错误记录过滤</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
 <div id="agent-test-panel">
@@ -216,7 +219,7 @@ async def custom_swagger_docs():
   const button = document.getElementById("agent-test-send");
   const message = document.getElementById("agent-test-message");
   const output = document.getElementById("agent-test-output");
-  const copyOnboarding = document.getElementById("copy-agent-onboarding");
+  const copyOnboarding = document.getElementById("copy-agent-onboarding"); 
 
   function log(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -282,12 +285,13 @@ async def custom_swagger_docs():
         option.value = JSON.stringify({ tenant_id: agent.tenant_id, agent_id: agent.agent_id });
         option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.agent_id} | ${agent.tenant_id}`;
         select.appendChild(option);
-      }
+      } 
       log(`已加载 ${agents.length} 个 agent，选择后可直接发送测试消息。`);
     } catch (err) {
       log("加载 agent 失败：\\n" + err.message);
     }
   }
+ 
 
   async function pollTask(tenantId, taskId) {
     for (let i = 1; i <= 90; i += 1) {
@@ -331,6 +335,7 @@ async def custom_swagger_docs():
       button.disabled = false;
     }
   });
+ 
 
   loadAgents();
 })();

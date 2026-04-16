@@ -239,6 +239,7 @@ def 公开自注册(
     display_name: str,
     local_agent_id: str,
     owner_profile: dict[str, Any],
+    agent_summary: str | None = None,
 ) -> dict[str, Any]:
     """通过公开入口完成 Agent Link 自注册，并返回响应 data。"""
     normalized_agent_id = agent_id if ":" in agent_id else f"openclaw:{agent_id}"
@@ -248,12 +249,65 @@ def 公开自注册(
             "agent_id": normalized_agent_id,
             "display_name": display_name,
             "capabilities": {"analysis": True, "generic": True},
+            "agent_summary": agent_summary or f"OpenClaw agent {local_agent_id}",
             "config_json": {
                 "workspace": local_agent_id,
                 "local_agent_id": local_agent_id,
+                "agent_summary": agent_summary or f"OpenClaw agent {local_agent_id}",
             },
             "owner_profile": owner_profile,
         },
     )
     return resp["data"]
 
+
+def 发布服务(
+    client: ApiClient,
+    handler_agent_id: str,
+    title: str,
+    summary: str,
+    service_id: str | None = None,
+) -> dict[str, Any]:
+    """发布一个可公开发现的 service。"""
+    payload = {
+        "handler_agent_id": handler_agent_id,
+        "title": title,
+        "summary": summary,
+        "visibility": "listed",
+        "contact_policy": "auto_accept",
+        "allow_agent_initiated_chat": True,
+    }
+    if service_id:
+        payload["service_id"] = service_id
+    return client.post("/v1/services", payload)["data"]
+
+
+def 创建服务会话(
+    client: ApiClient,
+    service_id: str,
+    opening_message: str,
+    initiator_agent_id: str | None = None,
+) -> dict[str, Any]:
+    """通过 service 发起一轮新会话。"""
+    payload = {"opening_message": opening_message}
+    if initiator_agent_id:
+        payload["initiator_agent_id"] = initiator_agent_id
+    return client.post(f"/v1/services/{service_id}/threads", payload)["data"]
+
+
+def 继续服务会话(
+    client: ApiClient,
+    thread_id: str,
+    text: str,
+    initiator_agent_id: str | None = None,
+) -> dict[str, Any]:
+    """对已有 service thread 继续发送下一轮消息。"""
+    payload = {"text": text}
+    if initiator_agent_id:
+        payload["initiator_agent_id"] = initiator_agent_id
+    return client.post(f"/v1/service-threads/{thread_id}/messages", payload)["data"]
+
+
+def 读取服务会话消息(client: ApiClient, thread_id: str) -> list[dict[str, Any]]:
+    """读取 service thread 消息列表。"""
+    return client.get(f"/v1/service-threads/{thread_id}/messages")["data"]

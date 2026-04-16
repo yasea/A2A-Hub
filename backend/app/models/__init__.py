@@ -9,6 +9,7 @@ from app.models.integration import RcRoomContextBinding, WebhookNonce, MeteringE
 from app.models.audit import AuditLog
 from app.models.agent_link_error import AgentLinkErrorEvent
 from app.models.routing import RoutingRule, TaskRouteHop
+from app.models.service import ServicePublication, ServiceThread, ServiceThreadMessage
 
 __all__ = [
     "Tenant", "Agent",
@@ -16,4 +17,5 @@ __all__ = [
     "Task", "TaskMessage", "TaskArtifact", "TaskStateTransition",
     "Approval", "Delivery", "RcRoomContextBinding", "WebhookNonce", "MeteringEvent", "AuditLog", "AgentLinkErrorEvent",
     "RoutingRule", "TaskRouteHop",
+    "ServicePublication", "ServiceThread", "ServiceThreadMessage",
 ]

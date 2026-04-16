@@ -1,0 +1,2 @@
+# 租户级 ACL：Mosquitto 用户名即 tenant_id。
+pattern readwrite a2a-hub/%u/#

@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="测试公开 Agent Link URL 自注册流程")
     parser.add_argument("--api-base", default=os.environ.get("API_BASE", 默认平台地址))
     parser.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "mia"))
+    parser.add_argument("--agent-summary", default=os.environ.get("AGENT_SUMMARY", ""))
     parser.add_argument("--user-md-file", default=os.environ.get("USER_MD_FILE", ""))
     parser.add_argument("--verify-tls", action="store_true", help="校验 TLS 证书。HTTP 或自签证书场景不需要开启")
     return parser.parse_args()
@@ -63,10 +64,12 @@ def main() -> int:
         display_name=local_agent_id.upper(),
         local_agent_id=local_agent_id,
         owner_profile=owner_profile,
+        agent_summary=args.agent_summary or f"OpenClaw agent {local_agent_id}",
     )
     print(json.dumps({
         "agent_id": resp["agent_id"],
         "tenant_id": resp["tenant_id"],
+        "agent_summary": resp.get("agent_summary"),
         "mqtt_broker_url": resp["mqtt_broker_url"],
         "mqtt_command_topic": resp["mqtt_command_topic"],
         "presence_url": resp["presence_url"],

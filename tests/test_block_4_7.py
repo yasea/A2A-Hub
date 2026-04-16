@@ -46,6 +46,7 @@ from app.schemas.integration import (
 from app.schemas.integration import OpenClawConnectLinkRequest
 from app.services.agent_link_service import AgentLinkService
 from app.services.openclaw_gateway_service import OpenClawConnection, openclaw_gateway_broker
+from app.services.mqtt_auth import tenant_mqtt_password, tenant_mqtt_username
 from app.schemas.integration import ApprovalResolveRequest
 from app.services.approval_service import ApprovalService
 from app.services.delivery_service import DeliveryService
@@ -488,6 +489,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         req = OpenClawAgentRegisterRequest(
             agent_id="openclaw:ava",
             display_name="AVA",
+            agent_summary="擅长技术设计评审",
             capabilities={"analysis": True},
             config_json={"workspace": "ava"},
         )
@@ -505,10 +507,11 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["agent_id"], "openclaw:ava")
         self.assertEqual(payload["scope"], "openclaw_gateway")
         self.assertEqual(response.data.transport, "mqtt")
+        self.assertEqual(response.data.agent_summary, "擅长技术设计评审")
         self.assertTrue(response.data.mqtt_command_topic.endswith("/tenant_001/agents/openclaw:ava/commands"))
         self.assertTrue(response.data.presence_url.endswith("/v1/agent-link/presence"))
-        self.assertEqual(response.data.mqtt_username, settings.MQTT_SHARED_USERNAME)
-        self.assertEqual(response.data.mqtt_password, settings.MQTT_SHARED_PASSWORD)
+        self.assertEqual(response.data.mqtt_username, tenant_mqtt_username("tenant_001"))
+        self.assertEqual(response.data.mqtt_password, tenant_mqtt_password("tenant_001"))
         self.assertEqual(response.data.ws_url, "wss://hub.example.com/ws/openclaw/gateway")
         self.assertTrue(response.data.onboarding_url.endswith("/openclaw/agents/connect"))
 
@@ -642,7 +645,8 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["agent_id"], "openclaw:ava")
         self.assertEqual(response.data.transport, "mqtt")
         self.assertTrue(response.data.mqtt_client_id.startswith("a2a_tenant_001_"))
-        self.assertEqual(response.data.mqtt_username, settings.MQTT_SHARED_USERNAME)
+        self.assertEqual(response.data.mqtt_username, tenant_mqtt_username("tenant_001"))
+        self.assertEqual(response.data.mqtt_password, tenant_mqtt_password("tenant_001"))
         self.assertEqual(response.data.ws_url, "wss://hub.example.com/ws/openclaw/gateway")
 
     async def test_agent_link_presence_accepts_agent_token(self):
@@ -707,6 +711,43 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         payload = decode_access_token(response.data.auth_token)
         self.assertEqual(payload["tenant_id"], "owner_old")
         self.assertEqual(response.data.tenant_id, "owner_old")
+
+    async def test_agent_link_self_register_persists_agent_summary_and_syncs_mosquitto_auth(self):
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=None)
+        db.add = Mock()
+        db.flush = AsyncMock()
+        db.execute = AsyncMock(side_effect=[FakeScalarResult(None)])
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+        request = SimpleNamespace(base_url="https://hub.example.com/")
+        req = AgentLinkSelfRegisterRequest(
+            agent_id="ava",
+            display_name="AVA",
+            agent_summary="擅长技术排障和多轮协作",
+            capabilities={"generic": True},
+            config_json={"local_agent_id": "ava"},
+            owner_profile={"source": "debug", "raw_text": "owner profile"},
+        )
+
+        with patch("app.api.routes_integrations.AsyncSessionLocal") as session_cls, patch(
+            "app.api.routes_integrations.AgentRegistry"
+        ) as registry_cls, patch(
+            "app.api.routes_integrations._sync_owner_tenant_mosquitto_auth", new_callable=AsyncMock
+        ) as sync_mock, patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
+            session_cls.return_value.__aenter__ = AsyncMock(return_value=db)
+            session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+            registry_cls.return_value.register = AsyncMock(
+                return_value=SimpleNamespace(agent_id="openclaw:ava", tenant_id="owner_x")
+            )
+
+            response = await agent_link_self_register(req=req, request=request)
+
+        kwargs = registry_cls.return_value.register.await_args.kwargs
+        self.assertEqual(kwargs["agent_id"], "openclaw:ava")
+        self.assertEqual(kwargs["config_json"]["agent_summary"], "擅长技术排障和多轮协作")
+        sync_mock.assert_awaited_once_with(db)
+        self.assertEqual(response.data.agent_summary, "擅长技术排障和多轮协作")
 
     async def test_agent_link_service_queues_when_publish_fails(self):
         """MQTT publish 失败时应回退到 pending 队列。"""
@@ -891,6 +932,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不是普通网页阅读任务", body)
         self.assertIn("AGENT_ID=<local-agent-id>", body)
         self.assertIn("当前会话可能短暂中断或显示 SIGTERM", body)
+        self.assertIn("openclaw gateway run --force", body)
         self.assertIn(".agent-link/install-result.json", body)
         self.assertIn("无法访问宿主机", body)
         self.assertIn("不要泄露 auth_token", body)
@@ -953,15 +995,31 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("channels.dbim_mqtt", body)
         self.assertIn("instances", body)
         self.assertIn("plugins.allow", body)
-        self.assertIn("无法安全推断 AGENT_ID", body)
+        self.assertIn("无法自动推断 AGENT_ID", body)
+        self.assertIn("已自动推断 AGENT_ID=", body)
         self.assertIn("已备份已有 dbim-mqtt 插件目录", body)
         self.assertIn("npm install --omit=dev", body)
         self.assertIn('chmod -R u=rwX,go=rX "$PLUGIN_DIR"', body)
         self.assertIn("异步重启", body)
+        self.assertIn('RESTART_MODE="manual"', body)
+        self.assertIn('nohup "$OPENCLAW_COMMAND" gateway run --force', body)
+        self.assertIn('write_install_result running gateway_restart_manual', body)
         self.assertIn("install-result.json", body)
         self.assertIn("/v1/agent-link/install-report", body)
+        self.assertIn('JSON.stringify(cfg, null, 2) + "\\n"', body)
+        self.assertNotIn('JSON.stringify(cfg, null, 2) + "\\\\n"', body)
         self.assertIn('const instanceDir = path.join(channelDir, shortAgentId);', body)
         self.assertIn('stateFile: path.join(instanceDir, "state.json")', body)
+        self.assertNotIn('connectUrlFile: path.join(instanceDir, "connect-url.txt")', body)
+        self.assertNotIn('fs.writeFileSync(path.join(instanceDir, "connect-url.txt")', body)
+        self.assertIn('delete nextInstance.connectUrlFile;', body)
+        self.assertIn('cfg.agents.list = Array.isArray(cfg.agents.list) ? cfg.agents.list : [];', body)
+        self.assertIn('if (!cfg.agents.list.some((item) => item && item.id === shortAgentId)) {', body)
+        self.assertIn("function parseAgentHint(text)", body)
+        self.assertIn("scanWorkspaceFile(scores, path.join(workspaceRoot, entry.name, \"SOUL.md\"), 5);", body)
+        self.assertIn('const sessionFile = path.join(process.env.HOME || "", ".openclaw", "agents", shortAgentId, "sessions", "sessions.json");', body)
+        self.assertIn('if (bound && typeof bound.sessionId === "string" && bound.sessionId.includes(":")) {', body)
+        self.assertIn('INSTANCE_DIR="$INSTANCE_DIR" \\', body)
         self.assertIn("nohup env", body)
 
     async def test_dbim_mqtt_plugin_package_can_be_downloaded(self):

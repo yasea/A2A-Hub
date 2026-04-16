@@ -49,7 +49,15 @@ class AgentLinkPluginTest(unittest.TestCase):
 
     def test_dbim_mqtt_multi_instance_config_resolves_two_agents(self):
         script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {{ resolvePluginInstances }} = require("{(self.plugin_root / 'lib' / 'config.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-mqtt-"));
+fs.mkdirSync(path.join(root, ".openclaw", "workspace", "ava"), {{ recursive: true }});
+fs.mkdirSync(path.join(root, ".openclaw", "workspace", "mia"), {{ recursive: true }});
+const previousHome = process.env.HOME;
+process.env.HOME = root;
 const instances = resolvePluginInstances({{
   config: {{
             channels: {{
@@ -72,6 +80,7 @@ const instances = resolvePluginInstances({{
             }}
   }}
 }});
+process.env.HOME = previousHome;
 console.log(JSON.stringify(instances));
 """
         output = self.run_node_script(script)
@@ -79,6 +88,114 @@ console.log(JSON.stringify(instances));
         self.assertIn('"agentId":"mia"', output)
         self.assertIn('/channels/dbim_mqtt/ava/state.json', output)
         self.assertIn('/channels/dbim_mqtt/mia/state.json', output)
+        self.assertIn('/workspace/ava/USER.md', output)
+        self.assertIn('/workspace/mia/USER.md', output)
+
+    def test_dbim_mqtt_prefers_modern_workspace_layout(self):
+        script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const {{ resolvePluginInstances }} = require("{(self.plugin_root / 'lib' / 'config.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-mqtt-"));
+fs.mkdirSync(path.join(root, ".openclaw", "workspace", "ava"), {{ recursive: true }});
+const previousHome = process.env.HOME;
+process.env.HOME = root;
+const instances = resolvePluginInstances({{
+  config: {{
+    channels: {{
+      dbim_mqtt: {{
+        instances: [{{ localAgentId: "ava", agentId: "ava", connectUrl: "http://example.com" }}],
+      }},
+    }},
+  }},
+}});
+process.env.HOME = previousHome;
+console.log(JSON.stringify(instances));
+"""
+        output = self.run_node_script(script)
+        self.assertIn('/workspace/ava/USER.md', output)
+        self.assertNotIn('/workspace-ava/USER.md', output)
+
+    def test_dbim_mqtt_falls_back_to_legacy_workspace_layout_when_only_legacy_exists(self):
+        script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const {{ resolvePluginInstances }} = require("{(self.plugin_root / 'lib' / 'config.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-mqtt-"));
+fs.mkdirSync(path.join(root, ".openclaw", "workspace-ava"), {{ recursive: true }});
+const previousHome = process.env.HOME;
+process.env.HOME = root;
+const instances = resolvePluginInstances({{
+  config: {{
+    channels: {{
+      dbim_mqtt: {{
+        instances: [{{ localAgentId: "ava", agentId: "ava", connectUrl: "http://example.com" }}],
+      }},
+    }},
+  }},
+}});
+process.env.HOME = previousHome;
+console.log(JSON.stringify(instances));
+"""
+        output = self.run_node_script(script)
+        self.assertIn('/workspace-ava/USER.md', output)
+        self.assertNotIn('/workspace/ava/USER.md', output)
+
+    def test_dbim_mqtt_infers_agent_from_user_md_when_config_is_main(self):
+        script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const {{ resolvePluginInstances }} = require("{(self.plugin_root / 'lib' / 'config.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-mqtt-"));
+const workspace = path.join(root, ".openclaw", "workspace", "main");
+fs.mkdirSync(workspace, {{ recursive: true }});
+fs.writeFileSync(path.join(workspace, "USER.md"), "agent_id: ava\\n", "utf8");
+fs.writeFileSync(path.join(workspace, "SOUL.md"), "Local Agent ID: ava\\n", "utf8");
+const previousHome = process.env.HOME;
+process.env.HOME = root;
+const instances = resolvePluginInstances({{
+  config: {{
+    agents: {{
+      list: [{{ id: "main" }}],
+    }},
+    channels: {{
+      dbim_mqtt: {{
+        agentId: "main",
+        userProfileFile: "~/.openclaw/workspace/main/USER.md",
+        connectUrl: "http://example.com",
+      }},
+    }},
+  }},
+}});
+process.env.HOME = previousHome;
+console.log(JSON.stringify(instances));
+"""
+        output = self.run_node_script(script)
+        self.assertIn('"agentId":"ava"', output)
+        self.assertIn('"localAgentId":"ava"', output)
+        self.assertIn('/workspace/main/USER.md', output)
+
+    def test_dbim_mqtt_reads_agent_summary_from_soul_md(self):
+        script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const {{ readAgentSummary }} = require("{(self.plugin_root / 'lib' / 'owner-profile.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-mqtt-"));
+const workspace = path.join(root, ".openclaw", "workspace", "ava");
+fs.mkdirSync(workspace, {{ recursive: true }});
+fs.writeFileSync(path.join(workspace, "SOUL.md"), "## Agent Summary\\n擅长多轮对话和技术排障。\\n", "utf8");
+const previousHome = process.env.HOME;
+process.env.HOME = root;
+const summary = readAgentSummary({{ agentId: "ava" }});
+process.env.HOME = previousHome;
+console.log(summary);
+"""
+        output = self.run_node_script(script)
+        self.assertEqual(output, "擅长多轮对话和技术排障。")
 
     def test_dbim_mqtt_channel_serializes_tasks_per_instance(self):
         script = f"""

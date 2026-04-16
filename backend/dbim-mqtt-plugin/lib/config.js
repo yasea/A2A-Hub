@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -40,13 +41,124 @@ function normalizeMetadata(input, agentId, localAgentId = agentId) {
   };
 }
 
+function workspaceDirCandidates(shortId) {
+  if (shortId === "main") {
+    return [
+      path.join("~/.openclaw", "workspace"),
+      path.join("~/.openclaw", "workspace-main"),
+    ];
+  }
+  return [
+    path.join("~/.openclaw", "workspace", shortId),
+    path.join("~/.openclaw", `workspace-${shortId}`),
+  ];
+}
+
+function resolveWorkspaceDir(shortId) {
+  const candidates = workspaceDirCandidates(shortId);
+  for (const candidate of candidates) {
+    const expanded = expandHome(candidate);
+    if (typeof expanded === "string" && fs.existsSync(expanded)) return candidate;
+  }
+  return candidates[0];
+}
+
+function normalizeAgentId(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.split(":").pop();
+}
+
+function workspaceAgentHint(file) {
+  const expanded = expandHome(file);
+  if (typeof expanded !== "string" || !expanded) return "";
+  const normalized = expanded.replace(/\\/g, "/");
+  const match = normalized.match(/\/workspace\/([^/]+)\/(?:USER|SOUL)\.md$/i);
+  if (match) return normalizeAgentId(match[1]);
+  if (/\/workspace\/(?:USER|SOUL)\.md$/i.test(normalized)) return "main";
+  const legacyMatch = normalized.match(/\/workspace-([^/]+)\/(?:USER|SOUL)\.md$/i);
+  if (legacyMatch) return normalizeAgentId(legacyMatch[1]);
+  if (/\/workspace-main\/(?:USER|SOUL)\.md$/i.test(normalized)) return "main";
+  return "";
+}
+
+function extractAgentHintFromText(text) {
+  if (typeof text !== "string" || !text.trim()) return "";
+  const patterns = [
+    /^\s*(?:local[_ -]?agent[_ -]?id|agent[_ -]?id)\s*[:=]\s*["']?([a-zA-Z0-9:_-]+)["']?\s*$/im,
+    /^\s*[-*]\s*\*{0,2}(?:Local\s+)?Agent\s+ID\*{0,2}\s*[:：]\s*`?([a-zA-Z0-9:_-]+)`?\s*$/im,
+    /^\s*[-*]\s*(?:local[_ -]?agent[_ -]?id|agent[_ -]?id)\s*[:：]\s*`?([a-zA-Z0-9:_-]+)`?\s*$/im,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const hint = normalizeAgentId(match && match[1]);
+    if (hint) return hint;
+  }
+  return "";
+}
+
+function readFileAgentHint(file) {
+  const expanded = expandHome(file);
+  if (typeof expanded !== "string" || !expanded || !fs.existsSync(expanded)) return "";
+  try {
+    return extractAgentHintFromText(fs.readFileSync(expanded, "utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function detectAgentHintsFromFiles(userProfileFile) {
+  const hints = [];
+  const pushHint = (value) => {
+    const normalized = normalizeAgentId(value);
+    if (normalized && !hints.includes(normalized)) hints.push(normalized);
+  };
+  pushHint(workspaceAgentHint(userProfileFile));
+  pushHint(readFileAgentHint(userProfileFile));
+  const expanded = expandHome(userProfileFile);
+  if (typeof expanded === "string" && expanded) {
+    pushHint(readFileAgentHint(path.join(path.dirname(expanded), "SOUL.md")));
+  }
+  return hints;
+}
+
+function configuredAgentIds(api) {
+  const root = api?.config && typeof api.config === "object" ? api.config : {};
+  const agents = root.agents && typeof root.agents === "object" ? root.agents : {};
+  const rawList = Array.isArray(agents.list) ? agents.list : [];
+  const values = [];
+  for (const item of rawList) {
+    const candidate = normalizeAgentId(typeof item === "string" ? item : item && item.id);
+    if (candidate && !values.includes(candidate)) values.push(candidate);
+  }
+  return values;
+}
+
+function inferAgentId(api, merged, fallbackAgentId) {
+  const explicitAgentId = normalizeAgentId(merged.agentId || merged.localAgentId || fallbackAgentId);
+  const fileHints = detectAgentHintsFromFiles(merged.userProfileFile);
+  const configAgents = configuredAgentIds(api);
+  const nonMainConfigAgents = configAgents.filter((item) => item !== "main");
+
+  if (explicitAgentId && explicitAgentId !== "main") return explicitAgentId;
+  for (const hint of fileHints) {
+    if (hint !== "main") return hint;
+  }
+  if (explicitAgentId === "main" && nonMainConfigAgents.length === 1) return nonMainConfigAgents[0];
+  if (!explicitAgentId && nonMainConfigAgents.length === 1) return nonMainConfigAgents[0];
+  if (!explicitAgentId && configAgents.length === 1) return configAgents[0];
+  return explicitAgentId || normalizeAgentId(fallbackAgentId) || "ava";
+}
+
 function resolveSingleConfig(merged, defaultAgentId = "ava") {
   const explicitReplyMode =
     typeof merged.replyMode === "string" && merged.replyMode.trim()
       ? merged.replyMode.trim()
       : "";
   const agentId = typeof merged.agentId === "string" && merged.agentId.trim() ? merged.agentId.trim() : defaultAgentId;
-  const shortId = String(agentId).includes(":") ? String(agentId).split(":").pop() : String(agentId);
+  const shortId = normalizeAgentId(agentId) || normalizeAgentId(defaultAgentId) || "ava";
+  const workspaceDir = resolveWorkspaceDir(shortId);
   return {
     enabled: merged.enabled !== false,
     agentId,
@@ -54,7 +166,7 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
     userProfileFile: expandHome(
       typeof merged.userProfileFile === "string" && merged.userProfileFile.trim()
         ? merged.userProfileFile.trim()
-        : path.join("~/.openclaw", `workspace-${shortId}`, "USER.md"),
+        : path.join(workspaceDir, "USER.md"),
     ),
     connectUrlFile: expandHome(
       typeof merged.connectUrlFile === "string" && merged.connectUrlFile.trim()
@@ -121,8 +233,16 @@ function resolvePluginInstances(api) {
 
   const rawInstances = Array.isArray(merged.instances) ? merged.instances : [];
   if (!rawInstances.length) {
-    const single = resolveSingleConfig(instanceBase, "ava");
-    single.localAgentId = String(single.agentId).split(":").pop();
+    const inferredAgentId = inferAgentId(api, instanceBase, "ava");
+    const single = resolveSingleConfig(
+      {
+        ...instanceBase,
+        agentId: inferredAgentId,
+        localAgentId: inferredAgentId,
+      },
+      inferredAgentId || "ava",
+    );
+    single.localAgentId = normalizeAgentId(single.agentId);
     single.metadata = normalizeMetadata(single.metadata, single.agentId, single.localAgentId);
     return [single];
   }
@@ -132,19 +252,28 @@ function resolvePluginInstances(api) {
     const fallbackAgentId = typeof instanceCfg.localAgentId === "string" && instanceCfg.localAgentId.trim()
       ? instanceCfg.localAgentId.trim()
       : `agent${index + 1}`;
+    const inferredAgentId = inferAgentId(
+      api,
+      {
+        ...instanceBase,
+        ...instanceCfg,
+      },
+      fallbackAgentId,
+    );
     const resolved = resolveSingleConfig(
       {
         ...instanceBase,
         ...instanceCfg,
-        agentId: instanceCfg.agentId || instanceCfg.localAgentId || instanceBase.agentId || fallbackAgentId,
+        agentId: instanceCfg.agentId || instanceCfg.localAgentId || instanceBase.agentId || inferredAgentId,
+        localAgentId: instanceCfg.localAgentId || inferredAgentId,
         metadata: {
           ...(instanceBase.metadata && typeof instanceBase.metadata === "object" ? instanceBase.metadata : {}),
           ...(instanceCfg.metadata && typeof instanceCfg.metadata === "object" ? instanceCfg.metadata : {}),
         },
       },
-      fallbackAgentId,
+      inferredAgentId || fallbackAgentId,
     );
-    resolved.localAgentId = String(instanceCfg.localAgentId || resolved.agentId).split(":").pop();
+    resolved.localAgentId = normalizeAgentId(instanceCfg.localAgentId || inferredAgentId || resolved.agentId);
     resolved.metadata = normalizeMetadata(resolved.metadata, resolved.agentId, resolved.localAgentId);
     return resolved;
   });
@@ -158,4 +287,5 @@ module.exports = {
   expandHome,
   resolvePluginConfig,
   resolvePluginInstances,
+  resolveWorkspaceDir,
 };

@@ -89,9 +89,10 @@ def main() -> int:
 
     打印分隔("步骤 3：推荐安装命令")
     print(
-        "AGENT_ID=\"{agent}\" \\\n"
         "CONNECT_URL=\"{connect}\" \\\n"
-        "curl -fsSL \"{script}\" | bash".format(
+        "curl -fsSL \"{script}\" | bash\n\n"
+        "# 如自动识别失败，再补：\n"
+        "AGENT_ID=\"{agent}\" CONNECT_URL=\"{connect}\" curl -fsSL \"{script}\" | bash".format(
             agent=local_agent_id,
             connect=manifest["public_connect_url"],
             script=manifest["openclaw_install_script_url"],
@@ -115,7 +116,7 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         打印成功("安装结果已显示成功或在线")
     else:
-        默认结果文件 = f"~/.openclaw/workspace-{local_agent_id}/.agent-link/install-result.json"
+        默认结果文件 = f"~/.openclaw/workspace/{local_agent_id}/.agent-link/install-result.json"
         打印分隔("步骤 5：结果检查提示")
         打印提示("安装完成后优先检查 workspace 里的结果镜像：")
         print(f"cat {默认结果文件}")

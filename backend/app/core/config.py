@@ -1,7 +1,21 @@
 """
 应用配置管理，从环境变量读取，支持 .env 文件
 """
+from pathlib import Path
 from pydantic_settings import BaseSettings
+
+
+# 获取 .env 文件路径（如果存在）
+def _get_env_file_path() -> str | None:
+    """
+    获取 .env 文件的绝对路径。
+    本地开发：config.py 在 backend/app/core/，.env 在项目根目录（三级向上）
+    Docker 容器：.env 通过 docker-compose.yml 的 env_file 注入，此路径不重要
+    远程部署：环境变量通过 docker-compose 注入，.env 文件可能不存在
+    """
+    env_file_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    # 只有在文件确实存在时才返回路径
+    return str(env_file_path) if env_file_path.exists() else None
 
 
 class Settings(BaseSettings):
@@ -36,8 +50,11 @@ class Settings(BaseSettings):
     MQTT_BASE_TOPIC: str = "a2a-hub"
     MQTT_USERNAME: str | None = None
     MQTT_PASSWORD: str | None = None
-    MQTT_SHARED_USERNAME: str | None = "agentlink"
-    MQTT_SHARED_PASSWORD: str | None = "agentlink-dev-password"
+    MQTT_TENANT_PASSWORD_SECRET: str = "dev-tenant-mqtt-secret-change-in-production"
+    MQTT_PASSWORDFILE_PBKDF2_ITERATIONS: int = 1000
+    MQTT_AUTH_PASSWORDFILE: str | None = None
+    MQTT_AUTH_ACLFILE: str | None = None
+    MQTT_AUTH_RELOAD_STAMP: str | None = None
 
     # 任务配置
     TASK_MAX_HOP_COUNT: int = 3          # 路由最大跳数
@@ -53,7 +70,9 @@ class Settings(BaseSettings):
         return (self.A2A_HUB_PUBLIC_BASE_URL or self.OPENCLAW_PUBLIC_BASE_URL or "http://127.0.0.1:1880").rstrip("/")
 
     class Config:
-        env_file = ".env"
+        # 只有当 .env 文件存在时才尝试读取
+        # env_file 为 None 时，pydantic-settings 会跳过文件读取，仅使用环境变量
+        env_file = _get_env_file_path()
         env_file_encoding = "utf-8"
 
 

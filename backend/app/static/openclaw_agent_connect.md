@@ -32,8 +32,8 @@
 ```text
 Broker: <mqtt_broker_url>
 Topic: <mqtt_command_topic>
-Username: <mqtt_username>
-Password: <mqtt_password>
+Username: <mqtt_username>  # 当前租户专属
+Password: <mqtt_password>  # 当前租户专属
 ```
 
 ## Presence
@@ -66,5 +66,7 @@ Content-Type: application/json
 ```
 
 ## 当前主文档
+
+平台当前只保留一份业务文档：
 
 [docs/agent-link-mqtt.md](../../../docs/agent-link-mqtt.md)
