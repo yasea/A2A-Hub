@@ -15,7 +15,12 @@ import app.models.context     # noqa
 import app.models.task        # noqa
 import app.models.approval    # noqa
 import app.models.delivery    # noqa
-import app.models.audit       # noqa
+import app.models.audit      # noqa
+import app.models.integration  # noqa
+import app.models.agent_friend  # noqa
+import app.models.routing     # noqa
+import app.models.service     # noqa
+import app.models.agent_link_error  # noqa
 
 config = context.config
 if config.config_file_name is not None:

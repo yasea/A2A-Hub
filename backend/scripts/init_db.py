@@ -1,9 +1,9 @@
 """
 初始化 A2A Hub 数据库结构和基础数据。
 
-当前仓库还没有 Alembic migration versions，因此 compose 部署时先用
-SQLAlchemy metadata 创建表。后续如果补齐 migrations，可将 db-init 切换为
-`alembic upgrade head`。
+当前 `db-init` 面向全新部署，使用 SQLAlchemy metadata 直接建表。
+仓库同时保留 Alembic versions 供后续增量升级；如果是已上线环境升级，
+应优先执行 `alembic upgrade head`，不要只依赖 `create_all`。
 """
 from __future__ import annotations
 

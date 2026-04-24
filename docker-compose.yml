@@ -35,6 +35,8 @@ services:
         condition: service_started
     volumes:
       - ./backend/app:/app/app   # 开发热重载
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini:ro
       - ./backend/dbim-mqtt-plugin:/app/dbim-mqtt-plugin:ro
       - ./deploy/mosquitto:/app/runtime/mosquitto-auth
 
@@ -52,6 +54,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini:ro
 
   postgres:
     image: postgres:16-alpine

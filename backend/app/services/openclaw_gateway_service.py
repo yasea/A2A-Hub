@@ -1,15 +1,9 @@
 """
-OpenClaw Gateway 适配：Agent 长连接、任务下发与事件回传。
+OpenClaw Gateway 适配：Agent 消息处理（HTTP 入口）。
 """
-import asyncio
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import WebSocket
-
-from app.core.security import decode_access_token
-from app.models.task import Task
 from app.services.openclaw_service import OpenClawService
 from app.services.task_service import InvalidTaskTransitionError, TaskService
 
@@ -29,88 +23,17 @@ class OpenClawConnection:
     connection_id: str
     tenant_id: str
     agent_id: str
-    websocket: WebSocket | None
-    metadata: dict[str, Any]
+    websocket: None = None
+    metadata: dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
 
 
 class OpenClawGatewayBroker:
     def __init__(self):
-        self._connections: dict[tuple[str, str], OpenClawConnection] = {}
-        self._pending: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        self._lock = asyncio.Lock()
-
-    async def register(
-        self,
-        websocket: WebSocket,
-        token: str,
-    ) -> OpenClawConnection:
-        payload = decode_access_token(token)
-        if payload.get("scope") != "openclaw_gateway":
-            raise ValueError("OpenClaw gateway token scope 非法")
-        tenant_id = payload.get("tenant_id")
-        agent_id = payload.get("agent_id")
-        if not tenant_id or not agent_id:
-            raise ValueError("OpenClaw gateway token 缺少 tenant_id 或 agent_id")
-
-        connection = OpenClawConnection(
-            connection_id=f"ocws_{uuid.uuid4().hex[:12]}",
-            tenant_id=tenant_id,
-            agent_id=agent_id,
-            websocket=websocket,
-            metadata={"sub": payload.get("sub")},
-        )
-        async with self._lock:
-            self._connections[(tenant_id, agent_id)] = connection
-        return connection
-
-    async def unregister(self, tenant_id: str, agent_id: str) -> None:
-        async with self._lock:
-            self._connections.pop((tenant_id, agent_id), None)
-
-    def get_connection(self, tenant_id: str, agent_id: str) -> OpenClawConnection | None:
-        return self._connections.get((tenant_id, agent_id))
-
-    async def send_json(self, tenant_id: str, agent_id: str, payload: dict[str, Any]) -> OpenClawConnection | None:
-        connection = self.get_connection(tenant_id, agent_id)
-        if not connection:
-            return None
-        if connection.websocket is None:
-            return connection
-        await connection.websocket.send_json(payload)
-        return connection
-
-    async def queue_payload(self, tenant_id: str, agent_id: str, payload: dict[str, Any]) -> None:
-        async with self._lock:
-            self._pending.setdefault((tenant_id, agent_id), []).append(payload)
-
-    async def flush_pending(self, tenant_id: str, agent_id: str) -> int:
-        connection = self.get_connection(tenant_id, agent_id)
-        if not connection:
-            return 0
-        async with self._lock:
-            payloads = self._pending.pop((tenant_id, agent_id), [])
-        for payload in payloads:
-            if connection.websocket is not None:
-                await connection.websocket.send_json(payload)
-        return len(payloads)
-
-    async def dispatch_task(self, task: Task) -> OpenClawConnection | None:
-        if not task.target_agent_id:
-            return None
-        payload = {
-            "type": "task.dispatch",
-            "task_id": task.task_id,
-            "tenant_id": task.tenant_id,
-            "context_id": task.context_id,
-            "task_type": task.task_type,
-            "input_text": task.input_text,
-            "metadata": task.metadata_json,
-            "trace_id": task.trace_id,
-        }
-        connection = await self.send_json(task.tenant_id, task.target_agent_id, payload)
-        if connection is None:
-            await self.queue_payload(task.tenant_id, task.target_agent_id, payload)
-        return connection
+        pass
 
     async def handle_agent_message(
         self,

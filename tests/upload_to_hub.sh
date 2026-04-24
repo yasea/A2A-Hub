@@ -5,11 +5,12 @@
 #   - backend/
 #   - database/
 #   - deploy/
+#   - tests/
 #   - docker-compose.yml
 #
 # 可选：
 #   - 通过 --only <path> 仅上传一个文件或目录
-#   - <path> 必须是 backend、database、deploy 或 docker-compose.yml 之一
+#   - <path> 必须是 backend、database、deploy、tests 或 docker-compose.yml 之一
 #
 # 默认目标：
 #   - 主机别名: hub
@@ -34,9 +35,9 @@ usage() {
   TARGET_HOST=hub TARGET_PATH=/data/wwwroot/ai-hub bash tests/upload_to_hub.sh --only docker-compose.yml
 
 说明:
-  - 默认上传 backend/、database/、deploy/、docker-compose.yml
+  - 默认上传 backend/、database/、deploy/、tests/、docker-compose.yml
   - --only 仅上传一个文件或目录
-  - --only 的路径必须位于 backend/、database/、deploy/ 下，或等于 docker-compose.yml
+  - --only 的路径必须位于 backend/、database/、deploy/、tests/ 下，或等于 docker-compose.yml
 EOF
 }
 
@@ -75,7 +76,7 @@ fi
 
 is_allowed_path() {
   case "$1" in
-    backend|backend/*|database|database/*|deploy|deploy/*|docker-compose.yml)
+    backend|backend/*|database|database/*|deploy|deploy/*|tests|tests/*|docker-compose.yml)
       return 0
       ;;
     *)
@@ -96,13 +97,13 @@ if [ -n "$ONLY_PATH" ]; then
   fi
   SYNC_ITEMS=("$ONLY_PATH")
 else
-  for path in backend database deploy docker-compose.yml; do
+  for path in backend database deploy tests docker-compose.yml; do
     if [ ! -e "$path" ]; then
       echo "缺少待上传内容: $path" >&2
       exit 2
     fi
   done
-  SYNC_ITEMS=(backend database deploy docker-compose.yml)
+  SYNC_ITEMS=(backend database deploy tests docker-compose.yml)
 fi
 
 echo "开始上传到 ${TARGET_HOST}:${TARGET_PATH}"
@@ -114,7 +115,7 @@ if [ -n "$ONLY_PATH" ]; then
   sshpass -e ssh "${TARGET_HOST}" "mkdir -p '${TARGET_PATH}/$(dirname "$ONLY_PATH")'"
   sshpass -e ssh "${TARGET_HOST}" "rm -rf '${TARGET_PATH}/${ONLY_PATH}'"
 else
-  sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && rm -rf backend database deploy docker-compose.yml"
+  sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && rm -rf backend database deploy tests docker-compose.yml"
 fi
 
 tar \
@@ -124,6 +125,7 @@ tar \
   --exclude='backend/app/__pycache__' \
   --exclude='database/__pycache__' \
   --exclude='deploy/__pycache__' \
+  --exclude='tests/__pycache__' \
   -czf - \
   "${SYNC_ITEMS[@]}" \
 | sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && tar -xzf -"

@@ -14,8 +14,12 @@ function platformAgentId(agentId) {
   return value.includes(":") ? value : `openclaw:${value}`;
 }
 
+function localAgentId(config = {}) {
+  return shortAgentId(config.localAgentId || config.agentId);
+}
+
 function candidateUserMdPaths(config = {}) {
-  const shortId = shortAgentId(config.agentId);
+  const shortId = localAgentId(config);
   const configured = typeof config.userProfileFile === "string" && config.userProfileFile.trim()
     ? [config.userProfileFile.trim()]
     : [];
@@ -39,7 +43,7 @@ function uniquePaths(paths) {
 }
 
 function candidateSoulMdPaths(config = {}) {
-  const shortId = shortAgentId(config.agentId);
+  const shortId = localAgentId(config);
   const configuredUserPaths = candidateUserMdPaths(config).map(expandHome);
   const siblingSoulPaths = configuredUserPaths.map((filePath) => path.join(path.dirname(filePath), "SOUL.md"));
   return uniquePaths([
@@ -118,13 +122,13 @@ function readOwnerProfile(config = {}) {
       source: "openclaw-user-md",
       user_md_path: found.filePath,
       raw_text: found.rawText.slice(0, 8192),
-      local_agent_id: shortAgentId(config.agentId),
+      local_agent_id: localAgentId(config),
       hostname: os.hostname(),
     };
   }
   return {
     source: "openclaw-runtime",
-    local_agent_id: shortAgentId(config.agentId),
+    local_agent_id: localAgentId(config),
     hostname: os.hostname(),
   };
 }
@@ -141,10 +145,11 @@ function readAgentSummary(config = {}) {
     const summary = normalizeSummary(extractLabeledSummary(foundUser.rawText));
     if (summary) return summary;
   }
-  return `OpenClaw agent ${shortAgentId(config.agentId)}`;
+  return `OpenClaw agent ${localAgentId(config)}`;
 }
 
 module.exports = {
+  localAgentId,
   platformAgentId,
   readAgentSummary,
   readOwnerProfile,

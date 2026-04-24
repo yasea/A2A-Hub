@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
+#!/bin/sh
+"exec" "python3" "$0" "$@"
 """
 远端 A2A Hub 联调脚本公共工具。
 
 只使用 Python 标准库，避免在内网服务器上额外安装依赖。
 """
-
-from __future__ import annotations
 
 import json
 import os
@@ -18,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-默认平台地址 = os.environ.get("API_BASE", "http://127.0.0.1:1880")
+默认平台地址 = os.environ.get("API_BASE") or os.environ.get("API") or "http://127.0.0.1:1880"
 默认租户 = "tenant_001"
 默认签发密钥 = "241-issuer-secret"
 

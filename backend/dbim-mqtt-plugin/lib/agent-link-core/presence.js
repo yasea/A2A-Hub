@@ -3,12 +3,25 @@
 const { nowIso } = require("./protocol");
 const { requestJson } = require("./http-client");
 
+function isAuthExpiredResponse(error) {
+  const status = Number(error && error.status);
+  const text = String((error && error.text) || error || "");
+  return (status === 401 || status === 403) && (
+    text.includes("Token 已过期")
+    || text.toLowerCase().includes("token expired")
+    || text.toLowerCase().includes("expired")
+  );
+}
+
 class PresenceClient {
-  constructor(bootstrap, config, stateStore) {
+  constructor(bootstrap, config, stateStore, options = {}) {
     this.bootstrap = bootstrap;
     this.config = config;
     this.stateStore = stateStore;
+    this.logger = options.logger || console;
+    this.onAuthExpired = options.onAuthExpired || null;
     this.timer = null;
+    this.authRefreshRequested = false;
   }
 
   async send() {
@@ -30,7 +43,10 @@ class PresenceClient {
       tlsRejectUnauthorized: this.config.tlsRejectUnauthorized,
     });
     if (!resp.ok) {
-      throw new Error(`presence failed: ${resp.status} ${resp.text}`);
+      const error = new Error(`presence failed: ${resp.status} ${resp.text}`);
+      error.status = resp.status;
+      error.text = resp.text;
+      throw error;
     }
     this.stateStore.write({
       status: "online",
@@ -45,7 +61,15 @@ class PresenceClient {
   start() {
     if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(() => {
-      void this.send().catch(() => {});
+      void this.send().catch((error) => {
+        if (isAuthExpiredResponse(error) && this.onAuthExpired && !this.authRefreshRequested) {
+          this.authRefreshRequested = true;
+          this.logger.warn?.(`dbim-mqtt: presence token expired; refreshing bootstrap for localAgentId=${this.config.localAgentId || this.config.agentId}`);
+          void this.onAuthExpired(error);
+          return;
+        }
+        this.logger.debug?.(`dbim-mqtt: presence heartbeat failed: ${String(error)}`);
+      });
     }, this.config.presenceIntervalSec * 1000);
   }
 
@@ -57,4 +81,5 @@ class PresenceClient {
 
 module.exports = {
   PresenceClient,
+  isAuthExpiredResponse,
 };

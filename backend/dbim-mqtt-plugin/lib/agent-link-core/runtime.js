@@ -6,7 +6,37 @@ const { AgentMessageApi } = require("./message-api");
 const { MqttCommandClient } = require("./mqtt-client");
 const { PresenceClient } = require("./presence");
 const { FileStateStore, ensureDir } = require("./state-store");
+const { writeAgentLinkLocalControl } = require("./local-control");
 const { nowIso } = require("./protocol");
+
+function writeInstallResultMirrors(config, state) {
+  const targets = [];
+  if (config.userProfileFile) {
+    targets.push(`${require("node:path").dirname(config.userProfileFile)}/.agent-link/install-result.json`);
+  }
+  if (config.stateFile) {
+    targets.push(`${require("node:path").dirname(config.stateFile)}/install-result.json`);
+  }
+  const payload = {
+    status: "success",
+    stage: "install_online",
+    summary: "Agent Link 安装完成，插件已在线",
+    detail: null,
+    localAgentId: config.localAgentId || config.agentId,
+    connectUrl: config.connectUrl || null,
+    state,
+    userProfileFile: config.userProfileFile || null,
+    updatedAt: nowIso(),
+  };
+  for (const target of targets) {
+    try {
+      ensureDir(target);
+      fs.writeFileSync(target, JSON.stringify(payload, null, 2) + "\n", "utf8");
+    } catch {
+      // Best-effort install mirror. Runtime state remains authoritative.
+    }
+  }
+}
 
 class AgentLinkCoreRuntime {
   constructor(api, config, processTask) {
@@ -79,7 +109,7 @@ class AgentLinkCoreRuntime {
     fs.watchFile(this.config.connectUrlFile, { interval: 1500 }, this.fileWatcher);
   }
 
-  async reload(reason) {
+  async reload(reason, options = {}) {
     const nextUrl = this.readConnectUrl();
     if (!nextUrl) {
       this.clearRetry();
@@ -91,7 +121,7 @@ class AgentLinkCoreRuntime {
       });
       return;
     }
-    if (nextUrl === this.currentConnectUrl && this.currentBootstrap) return;
+    if (!options.force && nextUrl === this.currentConnectUrl && this.currentBootstrap) return;
     if (this.connecting) return;
     this.connecting = true;
     try {
@@ -125,9 +155,21 @@ class AgentLinkCoreRuntime {
         },
       });
       await this.mqttClient.connect();
-      this.presenceClient = new PresenceClient(this.currentBootstrap, this.config, this.stateStore);
+      this.presenceClient = new PresenceClient(this.currentBootstrap, this.config, this.stateStore, {
+        logger: this.logger,
+        onAuthExpired: (error) => this.refreshAfterPresenceAuthFailure(error),
+      });
       await this.presenceClient.send();
       this.presenceClient.start();
+      writeInstallResultMirrors(this.config, {
+        status: "online",
+        updatedAt: nowIso(),
+        localAgentId: this.resolveLocalAgentId(),
+        topic: this.currentBootstrap.mqttCommandTopic,
+        agentId: this.currentBootstrap.agentId,
+        tenantId: this.currentBootstrap.tenantId,
+      });
+      writeAgentLinkLocalControl(this.config, this.currentBootstrap);
       this.logger.info(
         `dbim-mqtt: instance online localAgentId=${this.config.localAgentId || this.config.agentId} topic=${this.currentBootstrap.mqttCommandTopic}`,
       );
@@ -145,6 +187,17 @@ class AgentLinkCoreRuntime {
     } finally {
       this.connecting = false;
     }
+  }
+
+  async refreshAfterPresenceAuthFailure(error) {
+    if (!this.started || this.connecting) return;
+    this.logger.warn?.(`dbim-mqtt: refreshing bootstrap after presence auth failure: ${String(error)}`);
+    this.presenceClient?.stop();
+    this.presenceClient = null;
+    this.mqttClient?.stop();
+    this.mqttClient = null;
+    this.currentBootstrap = null;
+    await this.reload("presence_auth_expired", { force: true });
   }
 
   clearRetry() {
@@ -165,7 +218,7 @@ class AgentLinkCoreRuntime {
     const delayMs = Math.min(maxDelayMs, 1000 * (2 ** Math.min(this.retryAttempt - 1, 5)));
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      void this.reload("retry");
+      void this.reload("retry", { force: true });
     }, delayMs);
     if (typeof this.retryTimer.unref === "function") this.retryTimer.unref();
     this.stateStore.write({
@@ -180,4 +233,6 @@ class AgentLinkCoreRuntime {
 
 module.exports = {
   AgentLinkCoreRuntime,
+  writeInstallResultMirrors,
+  writeAgentLinkLocalControl,
 };

@@ -184,10 +184,13 @@ class ServiceConversationService:
         }
         task_service = TaskService(self.db)
         created = 0
+        linked_task_ids: list[str] = []
         for item in existing:
-            task_id = item.linked_task_id or (item.metadata_json or {}).get("linked_task_id")
-            if not task_id:
-                continue
+            task_id = str(item.linked_task_id or (item.metadata_json or {}).get("linked_task_id") or "").strip()
+            if task_id and task_id not in linked_task_ids:
+                linked_task_ids.append(task_id)
+
+        for task_id in linked_task_ids:
             task = await task_service.get(task_id, thread.provider_tenant_id)
             if not task:
                 continue

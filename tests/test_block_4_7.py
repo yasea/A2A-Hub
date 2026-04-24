@@ -10,29 +10,32 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.api.routes_integrations import (
+from app.api.routes_agent_link import (
     agent_link_report_error,
     agent_link_install_report,
     agent_link_presence,
     agent_link_prompt,
+    agent_link_friend_tools,
+    router as agent_link_router,
     agent_link_self_register,
-    create_openclaw_connect_link,
-    download_dbim_mqtt_plugin,
-    get_openclaw_bootstrap,
-    get_agent_link_manifest,
-    ingest_openclaw_approval,
-    get_openclaw_onboarding_info,
-    ingest_openclaw_transcript,
     openclaw_connect_page,
     openclaw_connect_markdown,
     openclaw_dbim_mqtt_install_script,
-    register_openclaw_agent,
-    process_due_deliveries,
-    replay_delivery,
-    resolve_approval,
-    subscribe_task,
+    download_dbim_mqtt_plugin,
+    get_agent_link_manifest,
 )
-from app.core.db import Base
+from app.api.routes_openclaw import (
+    create_openclaw_connect_link,
+    get_openclaw_bootstrap,
+    get_openclaw_onboarding_info,
+    ingest_openclaw_approval,
+    ingest_openclaw_transcript,
+    register_openclaw_agent,
+)
+from app.api.routes_approvals import resolve_approval
+from app.api.routes_deliveries import process_due_deliveries, replay_delivery
+from app.api.routes_events import subscribe_task
+from app.core.db import Base, AsyncSessionLocal
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token
 from app.main import custom_swagger_docs
@@ -42,14 +45,14 @@ from app.schemas.integration import (
     AgentLinkPresenceRequest,
     AgentLinkSelfRegisterRequest,
     OpenClawAgentRegisterRequest,
+    ApprovalResolveRequest,
 )
 from app.schemas.integration import OpenClawConnectLinkRequest
 from app.services.agent_link_service import AgentLinkService
 from app.services.openclaw_gateway_service import OpenClawConnection, openclaw_gateway_broker
-from app.services.mqtt_auth import tenant_mqtt_password, tenant_mqtt_username
-from app.schemas.integration import ApprovalResolveRequest
 from app.services.approval_service import ApprovalService
 from app.services.delivery_service import DeliveryService
+from app.services.mqtt_auth import tenant_mqtt_username, tenant_mqtt_password
 from app.services.openclaw_service import OpenClawService
 from app.services.rocketchat_service import RocketChatService
 from app.services.stream_service import task_event_broker
@@ -84,14 +87,6 @@ class FakeListResult:
 
     def scalars(self):
         return FakeScalars(self._values)
-
-
-class FakeWebSocket:
-    def __init__(self):
-        self.sent: list[dict] = []
-
-    async def send_json(self, payload):
-        self.sent.append(payload)
 
 
 class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
@@ -395,8 +390,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
         tenant = {"tenant_id": "tenant_001", "sub": "user_1"}
 
-        with patch("app.api.routes_integrations.DeliveryService") as delivery_cls:
-            delivery_cls.return_value.process_due = AsyncMock(side_effect=RuntimeError("内部异常"))
+        with patch("app.api.routes_deliveries.DeliveryService") as delivery_cls:
             response = await process_due_deliveries(db=db, tenant=tenant, limit=1)
 
         self.assertEqual(response.data["processed_count"], 0)
@@ -418,8 +412,8 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             metadata={},
         )
 
-        with patch("app.api.routes_integrations.WebhookSecurityService") as security_cls, patch(
-            "app.api.routes_integrations.OpenClawService"
+        with patch("app.api.routes_openclaw.WebhookSecurityService") as security_cls, patch(
+            "app.api.routes_openclaw.OpenClawService"
         ) as svc_cls:
             security_cls.return_value.verify = AsyncMock()
             svc_cls.return_value.ingest_transcript = AsyncMock(return_value={"task_id": "task_001"})
@@ -464,8 +458,8 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             metadata={},
         )
 
-        with patch("app.api.routes_integrations.WebhookSecurityService") as security_cls, patch(
-            "app.api.routes_integrations.OpenClawService"
+        with patch("app.api.routes_openclaw.WebhookSecurityService") as security_cls, patch(
+            "app.api.routes_openclaw.OpenClawService"
         ) as svc_cls:
             security_cls.return_value.verify = AsyncMock()
             svc_cls.return_value.ingest_approval_request = AsyncMock(return_value=approval)
@@ -496,7 +490,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(base_url="https://hub.example.com/")
         agent = SimpleNamespace(agent_id="openclaw:ava")
 
-        with patch("app.api.routes_integrations.AgentRegistry") as registry_cls, patch.object(
+        with patch("app.api.routes_openclaw.AgentRegistry") as registry_cls, patch.object(
             settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"
         ):
             registry_cls.return_value.register = AsyncMock(return_value=agent)
@@ -532,7 +526,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         """presence 缺少 Bearer token 时应记录错误事件。"""
         request = SimpleNamespace(headers={}, url=SimpleNamespace(path="/v1/agent-link/presence"))
 
-        with patch("app.api.routes_integrations.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
+        with patch("app.api._shared.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
             with self.assertRaises(HTTPException) as ctx:
                 await agent_link_presence(req=AgentLinkPresenceRequest(), request=request)
 
@@ -552,7 +546,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             url=SimpleNamespace(path="/v1/agent-link/errors"),
         )
 
-        with patch("app.api.routes_integrations.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
+        with patch("app.api._shared.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
             response = await agent_link_report_error(
                 req=AgentLinkErrorReportRequest(
                     stage="task_update",
@@ -584,7 +578,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         tenant = {"tenant_id": "tenant_001", "sub": "user_1"}
         request = SimpleNamespace(base_url="https://hub.example.com/")
 
-        with patch("app.api.routes_integrations.AgentRegistry") as registry_cls, patch.object(
+        with patch("app.api.routes_openclaw.AgentRegistry") as registry_cls, patch.object(
             settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"
         ):
             registry_cls.return_value.get = AsyncMock(return_value=None)
@@ -624,7 +618,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        with patch("app.api.routes_integrations.AgentRegistry") as registry_cls, patch.object(
+        with patch("app.api.routes_openclaw.AgentRegistry") as registry_cls, patch.object(
             settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"
         ):
             registry_cls.return_value.register = AsyncMock()
@@ -657,7 +651,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         )
         request = SimpleNamespace(headers={"authorization": f"Bearer {token}"})
 
-        with patch("app.api.routes_integrations.agent_link_service") as service:
+        with patch("app.api.routes_agent_link.agent_link_service") as service:
             service.heartbeat = AsyncMock(return_value={"agent_id": "openclaw:ava", "status": "online", "pending_count": 0})
             response = await agent_link_presence(
                 req=AgentLinkPresenceRequest(status="online", metadata={"version": "1.0"}),
@@ -691,8 +685,8 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             owner_profile={"source": "debug", "raw_text": "changed owner profile"},
         )
 
-        with patch("app.api.routes_integrations.AsyncSessionLocal") as session_cls, patch(
-            "app.api.routes_integrations.AgentRegistry"
+        with patch("app.api.routes_agent_link.AsyncSessionLocal") as session_cls, patch(
+            "app.api.routes_agent_link.AgentRegistry"
         ) as registry_cls, patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
             session_cls.return_value.__aenter__ = AsyncMock(return_value=db)
             session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -730,10 +724,10 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             owner_profile={"source": "debug", "raw_text": "owner profile"},
         )
 
-        with patch("app.api.routes_integrations.AsyncSessionLocal") as session_cls, patch(
-            "app.api.routes_integrations.AgentRegistry"
+        with patch("app.api.routes_agent_link.AsyncSessionLocal") as session_cls, patch(
+            "app.api.routes_agent_link.AgentRegistry"
         ) as registry_cls, patch(
-            "app.api.routes_integrations._sync_owner_tenant_mosquitto_auth", new_callable=AsyncMock
+            "app.api.routes_agent_link._sync_owner_tenant_mosquitto_auth", new_callable=AsyncMock
         ) as sync_mock, patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
             session_cls.return_value.__aenter__ = AsyncMock(return_value=db)
             session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -820,69 +814,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["type"], "task.ack.ack")
         self.assertEqual(response["state"], "WORKING")
 
-    async def test_openclaw_gateway_dispatch_pushes_task_to_connected_agent(self):
-        """在线 OpenClaw Agent 应能收到 task.dispatch。"""
-        websocket = FakeWebSocket()
-        connection = OpenClawConnection(
-            connection_id="ocws_001",
-            tenant_id="tenant_001",
-            agent_id="openclaw:ava",
-            websocket=websocket,
-            metadata={},
-        )
-        openclaw_gateway_broker._connections[("tenant_001", "openclaw:ava")] = connection
-        task = SimpleNamespace(
-            task_id="task_001",
-            tenant_id="tenant_001",
-            target_agent_id="openclaw:ava",
-            context_id="ctx_001",
-            task_type="analysis",
-            input_text="请分析客户需求",
-            metadata_json={"priority": "high"},
-            trace_id="trace_001",
-        )
-        try:
-            result = await openclaw_gateway_broker.dispatch_task(task)
-        finally:
-            openclaw_gateway_broker._connections.pop(("tenant_001", "openclaw:ava"), None)
-
-        self.assertIs(result, connection)
-        self.assertEqual(websocket.sent[0]["type"], "task.dispatch")
-        self.assertEqual(websocket.sent[0]["task_id"], "task_001")
-
-    async def test_openclaw_gateway_queues_offline_dispatch_and_flushes_on_connect(self):
-        """Agent 离线时应暂存待派发任务，连上后可自动 flush。"""
-        task = SimpleNamespace(
-            task_id="task_queued",
-            tenant_id="tenant_001",
-            target_agent_id="openclaw:ava",
-            context_id="ctx_001",
-            task_type="generic",
-            input_text="hello",
-            metadata_json={},
-            trace_id=None,
-        )
-        websocket = FakeWebSocket()
-        connection = OpenClawConnection(
-            connection_id="ocws_002",
-            tenant_id="tenant_001",
-            agent_id="openclaw:ava",
-            websocket=websocket,
-            metadata={},
-        )
-
-        await openclaw_gateway_broker.dispatch_task(task)
-        openclaw_gateway_broker._connections[("tenant_001", "openclaw:ava")] = connection
-        try:
-            flushed = await openclaw_gateway_broker.flush_pending("tenant_001", "openclaw:ava")
-        finally:
-            openclaw_gateway_broker._connections.pop(("tenant_001", "openclaw:ava"), None)
-            openclaw_gateway_broker._pending.pop(("tenant_001", "openclaw:ava"), None)
-
-        self.assertEqual(flushed, 1)
-        self.assertEqual(websocket.sent[0]["task_id"], "task_queued")
-
-    async def test_openclaw_connect_markdown_renders_bootstrap_and_ws_urls(self):
+    async def test_openclaw_connect_markdown_renders_bootstrap_and_mqtt_urls(self):
         """Markdown 接入文档应返回可直接读取的 bootstrap 和 WS 地址。"""
         request = SimpleNamespace(
             base_url="https://hub.example.com/",
@@ -938,6 +870,28 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不要泄露 auth_token", body)
         self.assertIn("https://hub.example.com/agent-link/connect", body)
 
+    async def test_agent_link_friend_tools_is_public_agent_runbook(self):
+        request = SimpleNamespace(base_url="https://hub.example.com/", query_params={})
+
+        with patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
+            response = await agent_link_friend_tools(request=request)
+
+        body = response.body.decode("utf-8")
+        self.assertIn("# A2A Hub Agent Link 好友操作说明", body)
+        self.assertIn("agent-linkctl accept '<invite-url-or-token>'", body)
+        self.assertIn("默认不改 `TOOLS.md`", body)
+        self.assertIn("writeWorkspaceTools=true", body)
+        self.assertIn("friend_tools_url=https://hub.example.com/agent-link/friend-tools", body)
+
+    def test_agent_link_friend_tools_route_supports_head(self):
+        route_methods = {}
+        for route in agent_link_router.routes:
+            path = getattr(route, "path", None)
+            if path in {"/agent-link/friend-tools", "/agent-link/friend-tools.md"}:
+                route_methods.setdefault(path, set()).update(route.methods or set())
+        self.assertIn("HEAD", route_methods["/agent-link/friend-tools"])
+        self.assertIn("HEAD", route_methods["/agent-link/friend-tools.md"])
+
     async def test_agent_link_install_report_records_public_result(self):
         request = SimpleNamespace(
             url=SimpleNamespace(path="/v1/agent-link/install-report"),
@@ -954,7 +908,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             metadata={"local_agent_id": "ava"},
         )
 
-        with patch("app.api.routes_integrations.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
+        with patch("app.api._shared.ErrorEventService.record_out_of_band", new=AsyncMock()) as record_mock:
             response = await agent_link_install_report(req=req, request=request)
 
         self.assertTrue(response.data["recorded"])
@@ -978,6 +932,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             "https://hub.example.com/agent-link/install/openclaw-dbim-mqtt.sh",
         )
         self.assertEqual(response.data.agent_prompt_url, "https://hub.example.com/agent-link/prompt")
+        self.assertEqual(response.data.friend_tools_url, "https://hub.example.com/agent-link/friend-tools")
         self.assertEqual(response.data.required_plugin, "dbim-mqtt")
 
     async def test_openclaw_install_script_configures_channel_plugin(self):
@@ -1004,6 +959,11 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('RESTART_MODE="manual"', body)
         self.assertIn('nohup "$OPENCLAW_COMMAND" gateway run --force', body)
         self.assertIn('write_install_result running gateway_restart_manual', body)
+        self.assertIn('max_wait_seconds="${INSTALL_MAX_WAIT_SECONDS:-240}"', body)
+        self.assertIn('poll_interval="${INSTALL_POLL_INTERVAL:-3}"', body)
+        self.assertIn('write_result running install_waiting', body)
+        self.assertIn('report_result running install_waiting', body)
+        self.assertIn("Gateway 已启动，Agent Link 仍在继续初始化，请稍后重新检查结果文件", body)
         self.assertIn("install-result.json", body)
         self.assertIn("/v1/agent-link/install-report", body)
         self.assertIn('JSON.stringify(cfg, null, 2) + "\\n"', body)
@@ -1041,13 +1001,10 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
     async def test_openclaw_gateway_handles_task_update_message(self):
         """Agent 通过长连接回传 task.update 时应更新任务并回 ACK。"""
         db = AsyncMock()
-        websocket = FakeWebSocket()
         connection = OpenClawConnection(
-            connection_id="ocws_001",
+            connection_id="http_openclaw:ava",
             tenant_id="tenant_001",
             agent_id="openclaw:ava",
-            websocket=websocket,
-            metadata={},
         )
         task = SimpleNamespace(task_id="task_001", context_id="ctx_001", state="COMPLETED")
 
@@ -1079,7 +1036,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
         tenant = {"tenant_id": "tenant_002", "sub": "user_2"}
 
-        with patch("app.api.routes_integrations.TaskService") as task_cls:
+        with patch("app.api.routes_events.TaskService") as task_cls:
             task_cls.return_value.get = AsyncMock(return_value=None)
             with self.assertRaises(HTTPException) as ctx:
                 await subscribe_task(task_id="task_001", db=db, tenant=tenant)
@@ -1106,7 +1063,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             dead_letter_reason=None,
         )
 
-        with patch("app.api.routes_integrations.DeliveryService") as delivery_cls:
+        with patch("app.api.routes_deliveries.DeliveryService") as delivery_cls:
             delivery_cls.return_value.replay_dead = AsyncMock(return_value=delivery)
             response = await replay_delivery(
                 delivery_id=str(delivery.delivery_id),

@@ -134,6 +134,31 @@ class ServiceDirectoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.data.thread.thread_id, "sth_001")
         self.assertEqual(response.data.task_id, "task_001")
 
+    async def test_create_service_thread_route_keeps_initiator_and_handler_for_follow_up_dialog(self):
+        db = AsyncMock()
+        tenant = {"tenant_id": "tenant_consumer", "sub": "user_2", "agent_id": "openclaw:consumer"}
+        publication = _publication(handler_agent_id="openclaw:provider")
+        thread = _thread(initiator_agent_id="openclaw:consumer", handler_agent_id="openclaw:provider")
+        with patch("app.api.routes_services.ServiceDirectoryService") as dir_cls, patch(
+            "app.api.routes_services.ServiceConversationService"
+        ) as conv_cls:
+            dir_cls.return_value.get_accessible = AsyncMock(return_value=publication)
+            conv_cls.return_value.create_thread = AsyncMock(return_value=thread)
+            conv_cls.return_value.send_consumer_message = AsyncMock(
+                return_value=(SimpleNamespace(message_id="stmsg_001"), "task_001")
+            )
+            response = await create_service_thread(
+                "svc_design",
+                req=ServiceThreadCreateRequest(
+                    opening_message="第一轮",
+                    initiator_agent_id="openclaw:consumer",
+                ),
+                db=db,
+                tenant=tenant,
+            )
+        self.assertEqual(response.data.thread.initiator_agent_id, "openclaw:consumer")
+        self.assertEqual(response.data.thread.handler_agent_id, "openclaw:provider")
+
     async def test_create_service_thread_message_route_rejects_non_consumer(self):
         db = AsyncMock()
         tenant = {"tenant_id": "tenant_provider", "sub": "user_provider"}

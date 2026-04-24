@@ -121,6 +121,7 @@ class OpenClawAgentRegistrationResponse(BaseModel):
     transcript_webhook_url: str
     approval_webhook_url: str
     message_types: list[str]
+    invite_url: str | None = None
     transport: str = "mqtt"
     mqtt_broker_url: str | None = None
     mqtt_client_id: str | None = None
@@ -193,6 +194,7 @@ class AgentLinkManifestResponse(BaseModel):
     plugin_download_url: str
     openclaw_install_script_url: str
     agent_prompt_url: str
+    friend_tools_url: str | None = None
     transport: str = "mqtt"
     mqtt_public_broker_url: str | None = None
     required_plugin: str = "dbim-mqtt"
@@ -246,7 +248,7 @@ class AgentLinkMessageRequest(BaseModel):
 
 
 class AgentLinkSendMessageRequest(BaseModel):
-    context_id: str
+    context_id: str | None = None
     target_agent_id: str
     parts: list[MessagePart] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

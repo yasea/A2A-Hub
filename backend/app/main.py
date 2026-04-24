@@ -10,12 +10,18 @@ from fastapi.openapi.docs import get_swagger_ui_html
 
 from app.api.routes_agents import router as agents_router
 from app.api.routes_contexts import router as contexts_router
-from app.api.routes_integrations import router as integrations_router
+from app.api.routes_agent_link import router as agent_link_router
+from app.api.routes_openclaw import router as openclaw_router
+from app.api.routes_approvals import router as approvals_router
+from app.api.routes_deliveries import router as deliveries_router
+from app.api.routes_docs_test import router as docs_test_router
+from app.api.routes_events import router as events_router
 from app.api.routes_messages import router as messages_router
 from app.api.routes_routing import router as routing_router
 from app.api.routes_services import router as services_router
 from app.api.routes_service_accounts import router as service_accounts_router
 from app.api.routes_tasks import router as tasks_router
+from app.api.routes_agent_friends import router as agent_friends_router
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 import app.models  # noqa: F401 — 确保所有 ORM mapper 完成配置
@@ -61,7 +67,13 @@ app.include_router(agents_router)
 app.include_router(routing_router)
 app.include_router(services_router)
 app.include_router(service_accounts_router)
-app.include_router(integrations_router)
+app.include_router(agent_link_router)
+app.include_router(openclaw_router)
+app.include_router(approvals_router)
+app.include_router(deliveries_router)
+app.include_router(docs_test_router)
+app.include_router(events_router)
+app.include_router(agent_friends_router)
 
 
 @app.get("/health", tags=["system"])
@@ -206,9 +218,14 @@ async def custom_swagger_docs():
   <main>
     <label for="agent-test-select">已注册 Agent</label>
     <select id="agent-test-select"><option>加载中...</option></select>
+    <label for="agent-friends-select">Agent 好友</label>
+    <select id="agent-friends-select"><option value="">先选择 agent</option></select>
     <label for="agent-test-message">测试消息</label>
     <textarea id="agent-test-message" rows="3">请只回复：DOCS_AGENT_TEST_OK</textarea>
-    <button id="agent-test-send">以平台名义发送并等待结果</button>
+    <div style="display:flex;gap:8px;">
+      <button id="agent-test-send">以平台名义发送并等待结果</button>
+      <button id="agent-test-send-as-agent">以选中 Agent 身份发送（admin 模拟）</button>
+    </div>
     <div class="hint">该窗口调用 docs-test 内部联调接口，自动创建 context、发送消息、轮询 task 和展示 assistant 回复。</div>
     <pre id="agent-test-output">等待操作...</pre>
   </main>
@@ -287,8 +304,35 @@ async def custom_swagger_docs():
         select.appendChild(option);
       } 
       log(`已加载 ${agents.length} 个 agent，选择后可直接发送测试消息。`);
+      // trigger friends load on change
+      select.addEventListener('change', loadFriendsForSelectedAgent);
     } catch (err) {
       log("加载 agent 失败：\\n" + err.message);
+    }
+  }
+
+  async function loadFriendsForSelectedAgent() {
+    const friendsSelect = document.getElementById('agent-friends-select');
+    friendsSelect.innerHTML = '<option>加载中...</option>';
+    if (!select.value) {
+      friendsSelect.innerHTML = '<option value="">先选择 agent</option>';
+      return;
+    }
+    try {
+      const selected = JSON.parse(select.value);
+      const agentId = selected.agent_id;
+      const items = await api(`/v1/docs-test/agents/${encodeURIComponent(agentId)}/friends`);
+      friendsSelect.innerHTML = '';
+      for (const it of items) {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ id: it.id, target_agent_id: it.target_agent_id, tenant_id: it.tenant_id });
+        opt.textContent = `${it.status} | ${it.requester_agent_id} → ${it.target_agent_id} | ${it.tenant_id}`;
+        friendsSelect.appendChild(opt);
+      }
+      if (!items.length) friendsSelect.innerHTML = '<option value="">无好友记录</option>';
+    } catch (err) {
+      friendsSelect.innerHTML = '<option value="">加载好友失败</option>';
+      log('加载好友失败:' + err.message);
     }
   }
  
@@ -333,6 +377,28 @@ async def custom_swagger_docs():
       log("测试失败：\\n" + err.message);
     } finally {
       button.disabled = false;
+    }
+  });
+
+  const sendAsAgentButton = document.getElementById('agent-test-send-as-agent');
+  sendAsAgentButton.addEventListener('click', async () => {
+    if (!select.value) return;
+    sendAsAgentButton.disabled = true;
+    try {
+      const selected = JSON.parse(select.value);
+      const agentId = selected.agent_id;
+      log('正在以 agent 身份发送...');
+      const sent = await api(`/v1/docs-test/agents/${encodeURIComponent(agentId)}/friends/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_agent_id: JSON.parse(document.getElementById('agent-friends-select').value || '{}').target_agent_id || selected.agent_id, message: message.value || '请只回复：DOCS_AGENT_TEST_OK' })
+      });
+      log({ sent, status: '已发送（以 agent 身份）', info: '注意：此接口为 admin 模拟，不代表真实 agent token 行为' });
+      await pollTask(sent.tenant_id, sent.task_id);
+    } catch (err) {
+      log('发送失败：\\n' + err.message);
+    } finally {
+      sendAsAgentButton.disabled = false;
     }
   });
  

@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制源码
 COPY app/ ./app/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./alembic.ini
 COPY scripts/ ./scripts/
 COPY dbim-mqtt-plugin/ ./dbim-mqtt-plugin/
 

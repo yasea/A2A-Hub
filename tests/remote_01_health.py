@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
+#!/bin/sh
+"exec" "python3" "$0" "$@"
 """
 远端部署基础检查。
 
 检查内容：
 1. /health 是否可访问
 2. /v1/openclaw/agents/onboarding 是否返回当前 Agent Link 配置
-3. service account token 是否可以签发
+3. 如果显式提供 SERVICE_ACCOUNT_ISSUER_SECRET，则检查 service account token 是否可以签发
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -21,8 +20,8 @@ from remote_api_common import (
     ApiClient,
     默认平台地址,
     默认租户,
-    默认签发密钥,
     打印分隔,
+    打印提示,
     打印成功,
     签发服务账号令牌,
 )
@@ -30,9 +29,9 @@ from remote_api_common import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="检查远端 A2A Hub 基础服务是否可用")
 
-    default_api_base = os.getenv("API_BASE") or 默认平台地址
+    default_api_base = os.getenv("API_BASE") or os.getenv("API") or 默认平台地址
     default_tenant = os.getenv("TENANT_ID") or 默认租户
-    default_secret = os.getenv("SERVICE_ACCOUNT_ISSUER_SECRET") or 默认签发密钥
+    default_secret = os.getenv("SERVICE_ACCOUNT_ISSUER_SECRET") or ""
 
     parser.add_argument("--api-base", default=default_api_base)
     parser.add_argument("--tenant-id", default=default_tenant)
@@ -63,6 +62,10 @@ def main() -> int:
     打印成功("Agent Link onboarding 可访问")
 
     打印分隔("步骤 3：检查 service account token 签发")
+    if not args.issuer_secret:
+        打印提示("未提供 SERVICE_ACCOUNT_ISSUER_SECRET，跳过 token 签发检查；如需检查请设置该环境变量或传 --issuer-secret")
+        return 0
+
     token = 签发服务账号令牌(
         api_base=args.api_base,
         issuer_secret=args.issuer_secret,

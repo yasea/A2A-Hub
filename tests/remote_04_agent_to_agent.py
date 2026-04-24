@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/bin/sh
+"exec" "python3" "$0" "$@"
 """
 远端 agent-to-agent 全流程测试。
 
@@ -12,8 +13,6 @@
 - 这个脚本不要求 source agent 插件真实在线，因为这里只用它的 Agent Link token 模拟发起方。
 - target agent 必须已经通过插件接入并在线，例如 openclaw:mia。
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -35,7 +34,7 @@ from remote_api_common import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="模拟一个已注册 agent 给另一个 OpenClaw agent 发消息")
-    parser.add_argument("--api-base", default=os.environ.get("API_BASE", 默认平台地址))
+    parser.add_argument("--api-base", default=os.environ.get("API_BASE") or os.environ.get("API") or 默认平台地址)
     parser.add_argument("--source-agent-id", default=os.environ.get("SOURCE_AGENT_ID", "openclaw:ava"))
     parser.add_argument("--target-agent-id", default=os.environ.get("TARGET_AGENT_ID", "openclaw:mia"))
     parser.add_argument("--source-user-md-file", default=os.environ.get("SOURCE_USER_MD_FILE", ""))

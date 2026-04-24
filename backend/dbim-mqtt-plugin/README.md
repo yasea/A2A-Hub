@@ -102,4 +102,22 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
 cat ~/.openclaw/workspace/mia/.agent-link/install-result.json
 ```
 
+插件在线后还会写入 `dbim_mqtt` 本地好友控制 CLI：
+
+```bash
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl --help
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl status
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl urls
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl doctor
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl invite
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl accept '<invite-url-or-token>'
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl update-request <friend-id> rejected
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl send openclaw:ava '你好，请回复 OK'
+~/.openclaw/workspace/mia/.agent-link/agent-linkctl send --context <context-id> openclaw:ava '继续上一轮对话'
+```
+
+同时会在 `.agent-link/friend-tools.md` 写入本地 runbook。默认不修改当前 workspace 的 `TOOLS.md`，避免改动用户自有 Markdown；如果主人明确允许长期注入，可在该实例配置里设置 `writeWorkspaceTools=true`，插件才会把 `A2A Hub Agent Link` 段落写入 `TOOLS.md`。`agent-linkctl` 会内部刷新 agent token，但不会输出 `auth_token`、MQTT password 或完整 Authorization header。`status` 和 `urls` 是本地只读命令；`doctor` 只访问 Hub 做最小诊断，不修改 OpenClaw 配置。
+
+Hub 也提供公开说明 URL：`/agent-link/friend-tools`。当不允许修改本地 `TOOLS.md` 时，主人可以把该 URL 或本地 `.agent-link/friend-tools.md` 发给 agent 作为当前会话说明。
+
 平台侧错误与安装异常可在 `/docs/errors?agent_id=openclaw:mia` 查看。

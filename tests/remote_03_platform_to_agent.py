@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/bin/sh
+"exec" "python3" "$0" "$@"
 """
 远端平台 -> OpenClaw agent 全流程测试。
 
@@ -9,8 +10,6 @@
 4. 轮询任务状态
 5. 读取 /v1/tasks/{task_id}/messages，确认 assistant 回复
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -34,7 +33,7 @@ from remote_api_common import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="模拟平台内部组件给 OpenClaw agent 发消息")
-    parser.add_argument("--api-base", default=os.environ.get("API_BASE", 默认平台地址))
+    parser.add_argument("--api-base", default=os.environ.get("API_BASE") or os.environ.get("API") or 默认平台地址)
     parser.add_argument("--tenant-id", default=os.environ.get("TENANT_ID", 默认租户))
     parser.add_argument("--issuer-secret", default=os.environ.get("SERVICE_ACCOUNT_ISSUER_SECRET", 默认签发密钥))
     parser.add_argument("--target-agent-id", default=os.environ.get("AGENT_ID", "openclaw:mia"))

@@ -73,6 +73,10 @@
             "type": "boolean",
             "description": "Whether task dispatch and replies should also be written into local OpenClaw sessions."
           },
+          "writeWorkspaceTools": {
+            "type": "boolean",
+            "description": "Opt-in: write A2A Hub helper instructions into workspace TOOLS.md. Defaults to false; helper and runbook are still written under .agent-link."
+          },
           "handlerCommand": {
             "type": "string",
             "description": "Optional local command used when replyMode=handler."
@@ -103,6 +107,7 @@
                 "bootstrapRetryIntervalSec": { "type": "integer", "minimum": 5 },
                 "tlsRejectUnauthorized": { "type": "boolean" },
                 "recordOpenClawSession": { "type": "boolean" },
+                "writeWorkspaceTools": { "type": "boolean" },
                 "handlerCommand": { "type": "string" },
                 "metadata": { "type": "object" }
               }
@@ -176,6 +181,10 @@
       "recordOpenClawSession": {
         "type": "boolean",
         "description": "Whether task dispatch and replies should also be written into local OpenClaw sessions."
+      },
+      "writeWorkspaceTools": {
+        "type": "boolean",
+        "description": "Opt-in: write A2A Hub helper instructions into workspace TOOLS.md. Defaults to false; helper and runbook are still written under .agent-link."
       },
       "handlerCommand": {
         "type": "string",

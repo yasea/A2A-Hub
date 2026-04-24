@@ -22,6 +22,7 @@ function fromChannelsConfig(api) {
     || typeof root.stateFile === "string"
     || typeof root.replyMode === "string"
     || typeof root.enabled === "boolean"
+    || typeof root.writeWorkspaceTools === "boolean"
   ) {
     return root;
   }
@@ -220,6 +221,10 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
       typeof merged.recordOpenClawSession === "boolean"
         ? merged.recordOpenClawSession
         : true,
+    writeWorkspaceTools:
+      typeof merged.writeWorkspaceTools === "boolean"
+        ? merged.writeWorkspaceTools
+        : false,
     instanceId: shortId,
   };
 }

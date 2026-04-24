@@ -1,7 +1,7 @@
 "use strict";
 
 const { requestJson } = require("./http-client");
-const { platformAgentId, readAgentSummary, readOwnerProfile, shortAgentId } = require("../owner-profile");
+const { localAgentId: resolveLocalAgentId, platformAgentId, readAgentSummary, readOwnerProfile } = require("../owner-profile");
 
 function normalizeBootstrap(connectUrl, baseUrl, data) {
   return {
@@ -24,8 +24,8 @@ function normalizeBootstrap(connectUrl, baseUrl, data) {
 async function selfRegister(connectUrl, baseUrl, config) {
   const ownerProfile = readOwnerProfile(config);
   const agentSummary = readAgentSummary(config);
-  const agentId = platformAgentId(config.agentId);
-  const localAgentId = shortAgentId(config.agentId);
+  const localAgentId = resolveLocalAgentId(config);
+  const agentId = platformAgentId(config.agentId || localAgentId);
   const resp = await requestJson(`${baseUrl}/v1/agent-link/self-register`, {
     method: "POST",
     headers: {

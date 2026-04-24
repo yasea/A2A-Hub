@@ -115,7 +115,7 @@ class DbimMqttChannel {
     const args = [
       "agent",
       "--agent",
-      shortAgentId(this.config.agentId),
+      shortAgentId(this.config.localAgentId || this.config.agentId),
       "--local",
       "--json",
       "--timeout",

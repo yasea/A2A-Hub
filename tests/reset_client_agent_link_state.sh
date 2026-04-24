@@ -6,7 +6,6 @@ TARGET_AGENT="main"
 REMOVE_PLUGIN="false"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_DIR="$OPENCLAW_HOME/plugins/dbim-mqtt"
-PLUGIN_BACKUP_GLOB="$OPENCLAW_HOME/plugins/dbim-mqtt.bak.*"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -46,9 +45,42 @@ if not config_file.exists():
     raise SystemExit(0)
 
 data = json.loads(config_file.read_text(encoding="utf-8"))
+remove_dbim_plugin_config = mode == "all"
+
+channels = data.get("channels")
+if isinstance(channels, dict):
+    dbim = channels.get("dbim_mqtt")
+    if isinstance(dbim, dict):
+        instances = dbim.get("instances")
+        if isinstance(instances, list):
+            kept = []
+            for item in instances:
+                local_agent = str(item.get("localAgentId") or item.get("agentId") or "").split(":")[-1]
+                remove = mode == "all" or local_agent == target
+                if not remove:
+                    kept.append(item)
+            if kept:
+                dbim["instances"] = kept
+            else:
+                dbim.pop("instances", None)
+
+        if mode == "all":
+            channels.pop("dbim_mqtt", None)
+        else:
+            top_agent = str(dbim.get("localAgentId") or dbim.get("agentId") or "").split(":")[-1]
+            if top_agent == target:
+                channels.pop("dbim_mqtt", None)
+            elif not dbim.get("instances") and not top_agent:
+                # An empty channel without plugin load config makes OpenClaw abort
+                # with: channels.dbim_mqtt: unknown channel id: dbim_mqtt.
+                channels.pop("dbim_mqtt", None)
+
+        if not channels.get("dbim_mqtt"):
+            channels.pop("dbim_mqtt", None)
+            remove_dbim_plugin_config = True
 
 plugins = data.get("plugins")
-if isinstance(plugins, dict):
+if remove_dbim_plugin_config and isinstance(plugins, dict):
     allow = plugins.get("allow")
     if isinstance(allow, list):
         allow = [item for item in allow if item != "dbim-mqtt"]
@@ -84,33 +116,6 @@ if isinstance(plugins, dict):
 
     if not plugins:
         data.pop("plugins", None)
-
-channels = data.get("channels")
-if isinstance(channels, dict):
-    dbim = channels.get("dbim_mqtt")
-    if isinstance(dbim, dict):
-        instances = dbim.get("instances")
-        if isinstance(instances, list):
-            kept = []
-            for item in instances:
-                local_agent = str(item.get("localAgentId") or item.get("agentId") or "").split(":")[-1]
-                remove = mode == "all" or local_agent == target
-                if not remove:
-                    kept.append(item)
-            if kept:
-                dbim["instances"] = kept
-            else:
-                dbim.pop("instances", None)
-
-        if mode == "all":
-            channels.pop("dbim_mqtt", None)
-        else:
-            top_agent = str(dbim.get("localAgentId") or dbim.get("agentId") or "").split(":")[-1]
-            if top_agent == target:
-                channels.pop("dbim_mqtt", None)
-
-        if not channels.get("dbim_mqtt"):
-            channels.pop("dbim_mqtt", None)
 
 config_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
@@ -171,16 +176,7 @@ else
 fi
 
 if [ "$REMOVE_PLUGIN" = "true" ]; then
-  latest_backup=""
-  for candidate in $PLUGIN_BACKUP_GLOB; do
-    if [ -e "$candidate" ]; then
-      latest_backup="$candidate"
-    fi
-  done
   rm -rf "$PLUGIN_DIR"
-  if [ -n "$latest_backup" ]; then
-    mv "$latest_backup" "$PLUGIN_DIR"
-  fi
 fi
 
 echo "客户端 Agent Link 测试状态已清理。"

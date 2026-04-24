@@ -10,6 +10,7 @@ from app.models.audit import AuditLog
 from app.models.agent_link_error import AgentLinkErrorEvent
 from app.models.routing import RoutingRule, TaskRouteHop
 from app.models.service import ServicePublication, ServiceThread, ServiceThreadMessage
+from app.models.agent_friend import AgentFriend
 
 __all__ = [
     "Tenant", "Agent",
@@ -18,4 +19,5 @@ __all__ = [
     "Approval", "Delivery", "RcRoomContextBinding", "WebhookNonce", "MeteringEvent", "AuditLog", "AgentLinkErrorEvent",
     "RoutingRule", "TaskRouteHop",
     "ServicePublication", "ServiceThread", "ServiceThreadMessage",
+    "AgentFriend",
 ]

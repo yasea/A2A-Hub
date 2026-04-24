@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/bin/sh
+"exec" "python3" "$0" "$@"
 """
 服务发布与跨租户多轮对话联调脚本。
 
@@ -9,8 +10,6 @@
 4. 轮询 thread 消息，确认 service 背后的 agent 回复
 5. 可选：继续第二轮多轮对话
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -34,7 +33,7 @@ from remote_api_common import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="联调 service directory 与 service thread 多轮对话")
-    parser.add_argument("--api-base", default=os.environ.get("API_BASE", 默认平台地址))
+    parser.add_argument("--api-base", default=os.environ.get("API_BASE") or os.environ.get("API") or 默认平台地址)
     parser.add_argument("--issuer-secret", default=os.environ.get("SERVICE_ACCOUNT_ISSUER_SECRET", 默认签发密钥))
     parser.add_argument("--provider-tenant-id", default=os.environ.get("PROVIDER_TENANT_ID", "owner_provider"))
     parser.add_argument("--consumer-tenant-id", default=os.environ.get("CONSUMER_TENANT_ID", "owner_consumer"))
