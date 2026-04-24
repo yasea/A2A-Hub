@@ -173,7 +173,7 @@ async def register_openclaw_agent(
     "/v1/openclaw/agents/{agent_id}/connect-link",
     response_model=ApiResponse[OpenClawConnectLinkResponse],
     summary="生成可直接转发给 OpenClaw Agent 的接入链接",
-    description="平台用户或服务账号使用。用于给某个 Agent 生成一次性兼容接入链接，适合旧版 connect_url/bootstrap 流程。",
+    description="平台用户或服务账号使用。用于给某个 Agent 生成可直接转发的一次性接入链接，并返回对应 bootstrap 地址。",
 )
 async def create_openclaw_connect_link(
     agent_id: str,
@@ -252,7 +252,7 @@ async def get_openclaw_onboarding_info(request: Request):
     "/v1/openclaw/agents/bootstrap",
     response_model=ApiResponse[OpenClawAgentRegistrationResponse],
     summary="通过一次性接入 token 获取 OpenClaw Agent 启动配置",
-    description="旧版 OpenClaw 接入链接或兼容插件使用。用 connect_url 中的一次性 token 换取 agent token、MQTT topic 和 Webhook 地址。",
+    description="通过接入链接中的一次性 token 换取 agent token、MQTT topic 和 Webhook 地址。",
 )
 async def get_openclaw_bootstrap(token: str, request: Request):
     tenant_id = None

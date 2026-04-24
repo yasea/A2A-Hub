@@ -369,23 +369,57 @@ console.log(JSON.stringify(calls));
         output = self.run_node_script(script)
         self.assertEqual(output, '[["retry",true]]')
 
-    def test_dbim_mqtt_writes_agent_linkctl_and_local_runbook_by_default(self):
+    def test_dbim_mqtt_cli_requires_agent_when_multiple_instances_exist(self):
+        script = f"""
+const {{ selectCliTarget }} = require("{(self.plugin_root / 'lib' / 'cli.js').as_posix()}");
+try {{
+  selectCliTarget([
+    {{ localAgentId: "main", platformAgentId: "openclaw:main", helperPath: "/tmp/main" }},
+    {{ localAgentId: "ava", platformAgentId: "openclaw:ava", helperPath: "/tmp/ava" }},
+  ], "");
+}} catch (error) {{
+  console.log(String(error.message || error));
+}}
+"""
+        output = self.run_node_script(script)
+        self.assertIn("multiple dbim_mqtt agents configured", output)
+        self.assertIn("main, ava", output)
+
+    def test_dbim_mqtt_cli_accepts_local_or_platform_agent_id(self):
+        script = f"""
+const {{ selectCliTarget }} = require("{(self.plugin_root / 'lib' / 'cli.js').as_posix()}");
+const targets = [
+  {{ localAgentId: "main", platformAgentId: "openclaw:main", config: {{ userProfileFile: "/tmp/main/USER.md" }} }},
+  {{ localAgentId: "ava", platformAgentId: "openclaw:ava", config: {{ userProfileFile: "/tmp/ava/USER.md" }} }},
+];
+const byLocal = selectCliTarget(targets, "ava");
+const byPlatform = selectCliTarget(targets, "openclaw:main");
+console.log(JSON.stringify([byLocal.localAgentId, byPlatform.platformAgentId]));
+"""
+        output = self.run_node_script(script)
+        self.assertEqual(output, '["ava","openclaw:main"]')
+
+    def test_dbim_mqtt_writes_local_runbook_by_default(self):
         script = f"""
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const cp = require("node:child_process");
 const {{ writeAgentLinkLocalControl }} = require("{(self.plugin_root / 'lib' / 'agent-link-core' / 'runtime.js').as_posix()}");
-function runGeneratedCli(scriptPath, command) {{
-  const oldArgv = process.argv;
-  const oldLog = console.log;
-  let captured = "";
-  process.argv = [process.execPath, scriptPath, command];
-  console.log = (value) => {{ captured = String(value); }};
-  delete require.cache[require.resolve(scriptPath)];
-  require(scriptPath);
-  console.log = oldLog;
-  process.argv = oldArgv;
-  return JSON.parse(captured);
+const {{ helperSource }} = require("{(self.plugin_root / 'lib' / 'agent-link-core' / 'local-control.js').as_posix()}");
+function runCli(command) {{
+  const env = {{
+    ...process.env,
+    DBIM_MQTT_CLI_CONFIG_JSON: JSON.stringify({{
+      connectUrl: "https://hub.example.com/agent-link/connect",
+      agentId: "openclaw:main",
+      localAgentId: "main",
+      userProfileFile,
+      httpTimeoutMs: 1234,
+      publicFriendToolsUrl: "https://hub.example.com/agent-link/friend-tools",
+    }}),
+  }};
+  return JSON.parse(cp.execFileSync(process.execPath, ["-e", helperSource(), "_", command], {{ env, encoding: "utf8" }}));
 }}
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "dbim-control-"));
 const userProfileFile = path.join(root, "workspace-main", "USER.md");
@@ -408,20 +442,14 @@ fs.writeFileSync(path.join(root, "workspace-main", ".agent-link", "install-resul
   state: {{ status: "online" }},
   updatedAt: "2026-04-23T00:00:00Z",
 }}), "utf8");
-const helper = fs.readFileSync(result.helperPath, "utf8");
-const cfg = JSON.parse(fs.readFileSync(result.configPath, "utf8"));
 const runbook = fs.readFileSync(result.runbookPath, "utf8");
-const status = runGeneratedCli(result.helperPath, "status");
-const urls = runGeneratedCli(result.helperPath, "urls");
+const status = runCli("status");
+const urls = runCli("urls");
 const toolsExists = fs.existsSync(path.join(root, "workspace-main", "TOOLS.md"));
 console.log(JSON.stringify([
-  helper.includes("agent-linkctl accept <invite_url_or_token>"),
-  helper.includes("agent-linkctl update-request <friend_id> <accepted|rejected|blocked>"),
-  helper.includes("agent-linkctl send [--context <context_id>] <target_agent_id> <message>"),
-  cfg.agentId,
-  cfg.httpTimeoutMs,
-  cfg.publicFriendToolsUrl,
+  runbook.includes("openclaw dbim-mqtt --agent main"),
   runbook.includes("A2A Hub Agent Link 好友操作"),
+  runbook.includes("agent-linkctl"),
   status.install_status,
   status.runtime_status,
   urls.friend_tools_url,
@@ -431,7 +459,7 @@ console.log(JSON.stringify([
         output = self.run_node_script(script)
         self.assertEqual(
             output,
-            '[true,true,true,"openclaw:main",1234,"https://hub.example.com/agent-link/friend-tools",true,"success","online","https://hub.example.com/agent-link/friend-tools",false]',
+            '[true,true,false,"success","online","https://hub.example.com/agent-link/friend-tools",false]',
         )
 
     def test_dbim_mqtt_writes_workspace_tools_only_when_enabled(self):
@@ -458,11 +486,12 @@ writeAgentLinkLocalControl({{
 const tools = fs.readFileSync(path.join(root, "workspace-main", "TOOLS.md"), "utf8");
 console.log(JSON.stringify([
   tools.includes("A2A Hub Agent Link"),
-  tools.includes("agent-linkctl send openclaw:ava"),
+  tools.includes("openclaw dbim-mqtt --agent main send openclaw:ava"),
+  tools.includes("agent-linkctl"),
 ]));
 """
         output = self.run_node_script(script)
-        self.assertEqual(output, '[true,true]')
+        self.assertEqual(output, '[true,true,false]')
 
 
 if __name__ == "__main__":

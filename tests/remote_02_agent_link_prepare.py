@@ -9,7 +9,7 @@
 3. 可选：根据本机 agent id 生成推荐安装命令
 4. 可选：轮询 workspace 安装结果镜像，确认 install-result.json 是否成功
 
-不再生成旧版 connect_url，也不再写本地 connect-url.txt。
+当前统一走公开 `/agent-link/connect`，不再写本地 `connect-url.txt`。
 """
 
 import argparse

@@ -825,7 +825,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
             response = await openclaw_connect_markdown(request=request)
 
-        self.assertIn("OpenClaw Agent Link 兼容接入指令", response.body.decode("utf-8"))
+        self.assertIn("OpenClaw Agent Link 接入指令", response.body.decode("utf-8"))
         self.assertIn("/v1/openclaw/agents/bootstrap?token=bootstrap-token-001", response.body.decode("utf-8"))
         self.assertIn("wss://hub.example.com/ws/openclaw/gateway", response.body.decode("utf-8"))
 
@@ -878,7 +878,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
 
         body = response.body.decode("utf-8")
         self.assertIn("# A2A Hub Agent Link 好友操作说明", body)
-        self.assertIn("agent-linkctl accept '<invite-url-or-token>'", body)
+        self.assertIn("openclaw dbim-mqtt --agent <local-agent-id> accept '<invite-url-or-token>'", body)
         self.assertIn("默认不改 `TOOLS.md`", body)
         self.assertIn("writeWorkspaceTools=true", body)
         self.assertIn("friend_tools_url=https://hub.example.com/agent-link/friend-tools", body)

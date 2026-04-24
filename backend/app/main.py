@@ -94,13 +94,17 @@ async def custom_swagger_docs():
     html = response.body.decode("utf-8")
     panel = """
 <style>
+  :root {
+    --agent-test-panel-gap: 18px;
+    --agent-test-panel-top: 108px;
+  }
   #agent-test-panel {
     position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 9999;
-    width: 380px;
-    max-height: 72vh;
+    top: var(--agent-test-panel-top);
+    right: var(--agent-test-panel-gap);
+    bottom: var(--agent-test-panel-gap);
+    z-index: 900;
+    width: min(380px, calc(100vw - (var(--agent-test-panel-gap) * 2)));
     overflow: auto;
     background: #111827;
     color: #f9fafb;
@@ -108,13 +112,59 @@ async def custom_swagger_docs():
     border-radius: 14px;
     box-shadow: 0 18px 48px rgba(15,23,42,.35);
     font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    backdrop-filter: blur(12px);
+  }
+  @media (max-width: 1120px), (max-height: 820px) {
+    #agent-test-panel {
+      position: static;
+      width: auto;
+      max-width: 1460px;
+      margin: 16px auto 0;
+      max-height: none;
+    }
   }
   #agent-test-panel header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     padding: 12px 14px;
     border-bottom: 1px solid #334155;
     font-weight: 700;
+    background: linear-gradient(180deg, rgba(30,41,59,.92), rgba(15,23,42,.92));
+  }
+  #agent-test-panel header strong { font-size: 13px; }
+  #agent-test-panel header .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  #agent-test-panel .ghost-btn {
+    width: 30px;
+    height: 30px;
+    margin: 0;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid #475569;
+    background: rgba(15,23,42,.7);
+    color: #e2e8f0;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #agent-test-panel .ghost-btn:hover {
+    background: rgba(30,41,59,.95);
+    border-color: #64748b;
   }
   #agent-test-panel main { padding: 12px 14px; }
+  #agent-test-panel.is-collapsed {
+    bottom: auto;
+    overflow: hidden;
+  }
+  #agent-test-panel.is-collapsed main {
+    display: none;
+  }
   #agent-test-panel label { display: block; margin: 8px 0 4px; color: #cbd5e1; }
   #agent-test-panel select, #agent-test-panel textarea, #agent-test-panel button {
     width: 100%;
@@ -122,22 +172,39 @@ async def custom_swagger_docs():
     border-radius: 8px;
     border: 1px solid #475569;
     padding: 8px;
+    transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
   }
   #agent-test-panel select, #agent-test-panel textarea {
     background: #0f172a;
     color: #f8fafc;
   }
+  #agent-test-panel select:focus, #agent-test-panel textarea:focus, #agent-test-panel button:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96,165,250,.16);
+  }
   #agent-test-panel button {
     margin-top: 10px;
-    background: #2563eb;
+    background: linear-gradient(180deg, #3b82f6, #2563eb);
     color: white;
     border-color: #2563eb;
     cursor: pointer;
     font-weight: 700;
   }
+  #agent-test-panel button:hover:enabled {
+    filter: brightness(1.04);
+  }
   #agent-test-panel button:disabled {
     opacity: .55;
     cursor: not-allowed;
+  }
+  #agent-test-panel .button-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  #agent-test-panel .button-row button {
+    min-height: 42px;
   }
   #agent-test-panel pre {
     margin: 10px 0 0;
@@ -151,6 +218,17 @@ async def custom_swagger_docs():
     overflow: auto;
   }
   #agent-test-panel .hint { color: #94a3b8; font-size: 12px; margin-top: 8px; }
+  #agent-test-panel .hint code {
+    background: rgba(148,163,184,.12);
+    color: #e2e8f0;
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  @media (max-width: 680px) {
+    #agent-test-panel .button-row {
+      grid-template-columns: 1fr;
+    }
+  }
   #agent-onboarding-card {
     margin: 18px auto 0;
     max-width: 1460px;
@@ -214,7 +292,12 @@ async def custom_swagger_docs():
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
 <div id="agent-test-panel">
-  <header>Agent 平台消息测试</header>
+  <header>
+    <strong>Agent 平台消息测试</strong>
+    <div class="toolbar">
+      <button id="agent-test-toggle" class="ghost-btn" type="button" title="最小化测试面板" aria-label="最小化测试面板">−</button>
+    </div>
+  </header>
   <main>
     <label for="agent-test-select">已注册 Agent</label>
     <select id="agent-test-select"><option>加载中...</option></select>
@@ -222,21 +305,50 @@ async def custom_swagger_docs():
     <select id="agent-friends-select"><option value="">先选择 agent</option></select>
     <label for="agent-test-message">测试消息</label>
     <textarea id="agent-test-message" rows="3">请只回复：DOCS_AGENT_TEST_OK</textarea>
-    <div style="display:flex;gap:8px;">
+    <div class="button-row">
       <button id="agent-test-send">以平台名义发送并等待结果</button>
       <button id="agent-test-send-as-agent">以选中 Agent 身份发送（admin 模拟）</button>
     </div>
-    <div class="hint">该窗口调用 docs-test 内部联调接口，自动创建 context、发送消息、轮询 task 和展示 assistant 回复。</div>
+    <div class="hint">该窗口调用 <code>docs-test</code> 内部联调接口，自动创建 context、发送消息、轮询 task 和展示 assistant 回复。</div>
     <pre id="agent-test-output">等待操作...</pre>
   </main>
 </div>
 <script>
 (function () {
+  const panel = document.getElementById("agent-test-panel");
   const select = document.getElementById("agent-test-select");
   const button = document.getElementById("agent-test-send");
   const message = document.getElementById("agent-test-message");
   const output = document.getElementById("agent-test-output");
-  const copyOnboarding = document.getElementById("copy-agent-onboarding"); 
+  const copyOnboarding = document.getElementById("copy-agent-onboarding");
+  const panelToggle = document.getElementById("agent-test-toggle");
+  const panelCollapsedKey = "a2a-hub.docs.agent-test-panel.collapsed";
+
+  function setPanelCollapsed(collapsed) {
+    if (!panel || !panelToggle) return;
+    panel.classList.toggle("is-collapsed", collapsed);
+    panelToggle.textContent = collapsed ? "+" : "−";
+    panelToggle.title = collapsed ? "展开测试面板" : "最小化测试面板";
+    panelToggle.setAttribute("aria-label", panelToggle.title);
+    try {
+      window.localStorage.setItem(panelCollapsedKey, collapsed ? "1" : "0");
+    } catch (_) {
+      // ignore storage errors
+    }
+  }
+
+  if (panel && panelToggle) {
+    let initialCollapsed = false;
+    try {
+      initialCollapsed = window.localStorage.getItem(panelCollapsedKey) === "1";
+    } catch (_) {
+      initialCollapsed = false;
+    }
+    setPanelCollapsed(initialCollapsed);
+    panelToggle.addEventListener("click", () => {
+      setPanelCollapsed(!panel.classList.contains("is-collapsed"));
+    });
+  }
 
   function log(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);

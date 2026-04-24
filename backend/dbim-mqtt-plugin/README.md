@@ -17,7 +17,7 @@ curl -fsSL "http://<平台IP或域名>:1880/agent-link/install/openclaw-dbim-mqt
 
 如果 OpenClaw 报 `channels.dbim_mqtt: unknown channel id: dbim_mqtt`，说明本机仍是旧插件 manifest 或配置先于插件加载。还要检查日志里是否有 `world-writable path`，如果插件目录权限过宽，OpenClaw 会阻止加载插件。重新运行当前安装脚本，让 OpenClaw 先识别新插件包里的 `channels: ["dbim_mqtt"]`，并修正插件目录权限。
 
-公开自注册或 bootstrap 失败时，插件会自动退避重试。旧版 token 化入口仅保留兼容；当前推荐始终使用公开 `/agent-link/connect`。
+公开自注册或 bootstrap 失败时，插件会自动退避重试。当前统一使用公开 `/agent-link/connect` 作为接入入口。
 
 ## 推荐配置
 
@@ -88,12 +88,12 @@ openclaw agent --agent mia ...
 chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
 ```
 
-安装脚本会自动兼容新旧 workspace 结构：
+安装脚本会自动识别本机 workspace 结构：
 
 - 优先使用 `~/.openclaw/workspace/<agent>/...`
-- 若本机仍是旧结构，则回退到 `~/.openclaw/workspace-<agent>/...`
+- 若本机仍是旧布局，则回退到 `~/.openclaw/workspace-<agent>/...`
 - 若配置里只有 `main`，插件会继续结合 `USER.md`、同目录 `SOUL.md` 和 `agents.list` 自动推断真实短 agent id。
-- 当前推荐直接在配置里写 `connectUrl`；`connectUrlFile` 仅为兼容旧配置或本地开发热切换保留。
+- 当前推荐直接在配置里写 `connectUrl`；`connectUrlFile` 仅用于本地开发热切换。
 - 自注册会附带 `agent_summary`。插件优先读取同目录 `SOUL.md` 的简介段或 `agent_summary:` 字段，没有时回退为默认 `OpenClaw agent <id>`。
 
 安装完成后，优先检查：
@@ -102,21 +102,21 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
 cat ~/.openclaw/workspace/mia/.agent-link/install-result.json
 ```
 
-插件在线后还会写入 `dbim_mqtt` 本地好友控制 CLI：
+插件在线后会暴露正式好友控制 CLI：
 
 ```bash
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl --help
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl status
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl urls
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl doctor
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl invite
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl accept '<invite-url-or-token>'
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl update-request <friend-id> rejected
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl send openclaw:ava '你好，请回复 OK'
-~/.openclaw/workspace/mia/.agent-link/agent-linkctl send --context <context-id> openclaw:ava '继续上一轮对话'
+openclaw dbim-mqtt --agent mia --help
+openclaw dbim-mqtt --agent mia status
+openclaw dbim-mqtt --agent mia urls
+openclaw dbim-mqtt --agent mia doctor
+openclaw dbim-mqtt --agent mia invite
+openclaw dbim-mqtt --agent mia accept '<invite-url-or-token>'
+openclaw dbim-mqtt --agent mia update-request <friend-id> rejected
+openclaw dbim-mqtt --agent mia send openclaw:ava '你好，请回复 OK'
+openclaw dbim-mqtt --agent mia send --context <context-id> openclaw:ava '继续上一轮对话'
 ```
 
-同时会在 `.agent-link/friend-tools.md` 写入本地 runbook。默认不修改当前 workspace 的 `TOOLS.md`，避免改动用户自有 Markdown；如果主人明确允许长期注入，可在该实例配置里设置 `writeWorkspaceTools=true`，插件才会把 `A2A Hub Agent Link` 段落写入 `TOOLS.md`。`agent-linkctl` 会内部刷新 agent token，但不会输出 `auth_token`、MQTT password 或完整 Authorization header。`status` 和 `urls` 是本地只读命令；`doctor` 只访问 Hub 做最小诊断，不修改 OpenClaw 配置。
+同时会在 `.agent-link/friend-tools.md` 写入本地 runbook。默认不修改当前 workspace 的 `TOOLS.md`，避免改动用户自有 Markdown；如果主人明确允许长期注入，可在该实例配置里设置 `writeWorkspaceTools=true`，插件才会把 `A2A Hub Agent Link` 段落写入 `TOOLS.md`。`openclaw dbim-mqtt` 会内部刷新 agent token，但不会输出 `auth_token`、MQTT password 或完整 Authorization header。`status` 和 `urls` 是本地只读命令；`doctor` 只访问 Hub 做最小诊断，不修改 OpenClaw 配置。
 
 Hub 也提供公开说明 URL：`/agent-link/friend-tools`。当不允许修改本地 `TOOLS.md` 时，主人可以把该 URL 或本地 `.agent-link/friend-tools.md` 发给 agent 作为当前会话说明。
 

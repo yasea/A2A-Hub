@@ -6,10 +6,14 @@ set -euo pipefail
 # This script does not edit OpenClaw config, does not write TOOLS.md, and does
 # not restart the Gateway. It simulates the owner sending natural-language
 # instructions to already-connected OpenClaw agents, asking them to use the
-# dbim_mqtt local CLI generated under .agent-link.
+# formal `openclaw dbim-mqtt --agent ...` CLI surface.
 
 OPENCLAW_CMD=${OPENCLAW_CMD:-openclaw}
+MAIN_OPENCLAW_HOST=${MAIN_OPENCLAW_HOST:-}
+MAIN_OPENCLAW_BIN=${MAIN_OPENCLAW_BIN:-$OPENCLAW_CMD}
 MAIN_AGENT=${MAIN_AGENT:-main}
+TARGET_OPENCLAW_HOST=${TARGET_OPENCLAW_HOST:-}
+TARGET_OPENCLAW_BIN=${TARGET_OPENCLAW_BIN:-$OPENCLAW_CMD}
 TARGET_AGENT=${TARGET_AGENT:-ava}
 PUBLIC_FRIEND_TOOLS_URL=${PUBLIC_FRIEND_TOOLS_URL:-}
 OPENCLAW_HOME=${OPENCLAW_HOME:-$HOME/.openclaw}
@@ -17,18 +21,7 @@ TIMEOUT=${TIMEOUT:-180}
 RUN_ID=${RUN_ID:-$(date +%Y%m%d%H%M%S)}
 WORK_DIR=${WORK_DIR:-/tmp/a2a-hub-owner-flow-$RUN_ID}
 
-MAIN_CLI=${MAIN_CLI:-$OPENCLAW_HOME/workspace-$MAIN_AGENT/.agent-link/agent-linkctl}
-TARGET_CLI=${TARGET_CLI:-$OPENCLAW_HOME/workspace-$TARGET_AGENT/.agent-link/agent-linkctl}
-
 mkdir -p "$WORK_DIR"
-
-require_file() {
-  if [ ! -x "$1" ]; then
-    echo "缺少可执行 CLI: $1" >&2
-    echo "请先完成 Agent Link 安装，或通过 MAIN_CLI/TARGET_CLI 指定路径。" >&2
-    exit 2
-  fi
-}
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -37,17 +30,77 @@ require_command() {
   fi
 }
 
-agent_message() {
-  local agent="$1"
-  local session="$2"
-  local message="$3"
-  local output="$4"
-  "$OPENCLAW_CMD" agent \
-    --agent "$agent" \
-    --session-id "$session" \
-    --message "$message" \
-    --timeout "$TIMEOUT" \
-    --json | tee "$output"
+run_remote_openclaw() {
+  local host="$1"
+  local bin="$2"
+  shift 2
+  local cmd=()
+  local part
+  cmd+=("$(printf '%q' "$bin")")
+  for part in "$@"; do
+    cmd+=("$(printf '%q' "$part")")
+  done
+  ssh "$host" "bash -lc $(printf '%q' "${cmd[*]}")"
+}
+
+run_main_cli() {
+  if [ -n "$MAIN_OPENCLAW_HOST" ]; then
+    run_remote_openclaw "$MAIN_OPENCLAW_HOST" "$MAIN_OPENCLAW_BIN" dbim-mqtt --agent "$MAIN_AGENT" "$@"
+  else
+    "$MAIN_OPENCLAW_BIN" dbim-mqtt --agent "$MAIN_AGENT" "$@"
+  fi
+}
+
+run_target_cli() {
+  if [ -n "$TARGET_OPENCLAW_HOST" ]; then
+    run_remote_openclaw "$TARGET_OPENCLAW_HOST" "$TARGET_OPENCLAW_BIN" dbim-mqtt --agent "$TARGET_AGENT" "$@"
+  else
+    "$TARGET_OPENCLAW_BIN" dbim-mqtt --agent "$TARGET_AGENT" "$@"
+  fi
+}
+
+agent_message_main() {
+  local session="$1"
+  local message="$2"
+  local output="$3"
+  if [ -n "$MAIN_OPENCLAW_HOST" ]; then
+    run_remote_openclaw "$MAIN_OPENCLAW_HOST" "$MAIN_OPENCLAW_BIN" \
+      agent \
+      --agent "$MAIN_AGENT" \
+      --session-id "$session" \
+      --message "$message" \
+      --timeout "$TIMEOUT" \
+      --json | tee "$output"
+  else
+    "$MAIN_OPENCLAW_BIN" agent \
+      --agent "$MAIN_AGENT" \
+      --session-id "$session" \
+      --message "$message" \
+      --timeout "$TIMEOUT" \
+      --json | tee "$output"
+  fi
+}
+
+agent_message_target() {
+  local session="$1"
+  local message="$2"
+  local output="$3"
+  if [ -n "$TARGET_OPENCLAW_HOST" ]; then
+    run_remote_openclaw "$TARGET_OPENCLAW_HOST" "$TARGET_OPENCLAW_BIN" \
+      agent \
+      --agent "$TARGET_AGENT" \
+      --session-id "$session" \
+      --message "$message" \
+      --timeout "$TIMEOUT" \
+      --json | tee "$output"
+  else
+    "$TARGET_OPENCLAW_BIN" agent \
+      --agent "$TARGET_AGENT" \
+      --session-id "$session" \
+      --message "$message" \
+      --timeout "$TIMEOUT" \
+      --json | tee "$output"
+  fi
 }
 
 extract_first_invite_url() {
@@ -85,12 +138,49 @@ import json
 import sys
 path = sys.argv[1]
 target = sys.argv[2]
-data = json.load(open(path, encoding="utf-8"))
+text = open(path, encoding="utf-8", errors="replace").read()
+decoder = json.JSONDecoder()
+data = {}
+for index, ch in enumerate(text):
+    if ch != "{":
+        continue
+    try:
+        obj, _ = decoder.raw_decode(text[index:])
+    except Exception:
+        continue
+    if isinstance(obj, dict) and "friends" in obj:
+        data = obj
+        break
 for item in data.get("friends", []):
     peer = item.get("target_agent_id") or item.get("peer_agent_id") or ""
     requester = item.get("requester_agent_id") or ""
     if item.get("status") == "ACCEPTED" and (peer == target or requester == target):
         print(item.get("id") or item.get("friend_id") or "")
+        break
+PY
+}
+
+extract_json_field_from_mixed_output() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+field = sys.argv[1]
+text = sys.argv[2]
+decoder = json.JSONDecoder()
+candidates = []
+for index, ch in enumerate(text):
+    if ch != "{":
+        continue
+    try:
+        obj, _ = decoder.raw_decode(text[index:])
+    except Exception:
+        continue
+    candidates.append(obj)
+for obj in reversed(candidates):
+    value = obj.get(field, "")
+    if value:
+        print(value)
         break
 PY
 }
@@ -101,14 +191,15 @@ echo "main=$MAIN_AGENT target=$TARGET_AGENT work_dir=$WORK_DIR"
 require_command "$OPENCLAW_CMD"
 require_command python3
 require_command curl
-require_file "$MAIN_CLI"
-require_file "$TARGET_CLI"
+if [ -n "$MAIN_OPENCLAW_HOST" ] || [ -n "$TARGET_OPENCLAW_HOST" ]; then
+  require_command ssh
+fi
 
 if [ -z "$PUBLIC_FRIEND_TOOLS_URL" ]; then
-  PUBLIC_FRIEND_TOOLS_URL="$("$MAIN_CLI" urls | python3 -c 'import json,sys; print(json.load(sys.stdin).get("friend_tools_url",""))' 2>/dev/null || true)"
+  PUBLIC_FRIEND_TOOLS_URL="$(extract_json_field_from_mixed_output friend_tools_url "$(run_main_cli urls 2>/dev/null || true)")"
 fi
 if [ -z "$PUBLIC_FRIEND_TOOLS_URL" ]; then
-  echo "无法从 $MAIN_CLI urls 解析 friend_tools_url，请显式传 PUBLIC_FRIEND_TOOLS_URL。" >&2
+  echo "无法从 openclaw dbim-mqtt --agent $MAIN_AGENT urls 解析 friend_tools_url，请显式传 PUBLIC_FRIEND_TOOLS_URL。" >&2
   exit 2
 fi
 if ! curl -fsS "$PUBLIC_FRIEND_TOOLS_URL" >/dev/null; then
@@ -118,13 +209,13 @@ fi
 
 DIRECT_FRIEND_JSON="$WORK_DIR/00-main-friends.json"
 EXISTING_FRIEND_ID=""
-if "$MAIN_CLI" friends >"$DIRECT_FRIEND_JSON" 2>/dev/null; then
+if run_main_cli friends >"$DIRECT_FRIEND_JSON" 2>/dev/null; then
   EXISTING_FRIEND_ID="$(extract_existing_accepted_friend "$DIRECT_FRIEND_JSON" "openclaw:$TARGET_AGENT" || true)"
 fi
 
 echo
 echo "1) 主人让 $MAIN_AGENT 做最小诊断"
-agent_message "$MAIN_AGENT" "a2a-owner-cli-$RUN_ID-main-check" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：$MAIN_CLI 依次执行 status、urls、doctor。只向我报告安全字段，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/01-main-check.json"
+agent_message_main "a2a-owner-cli-$RUN_ID-main-check" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：openclaw dbim-mqtt --agent $MAIN_AGENT 依次执行 status、urls、doctor。只向我报告安全字段，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/01-main-check.json"
 
 if [ -n "$EXISTING_FRIEND_ID" ]; then
   echo
@@ -132,7 +223,7 @@ if [ -n "$EXISTING_FRIEND_ID" ]; then
 else
   echo
   echo "2) 主人让 $MAIN_AGENT 提供 invite URL"
-  agent_message "$MAIN_AGENT" "a2a-owner-cli-$RUN_ID-main-invite" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：$MAIN_CLI invite。只输出 invite_url、agent_id、tenant_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/02-main-invite.json"
+  agent_message_main "a2a-owner-cli-$RUN_ID-main-invite" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：openclaw dbim-mqtt --agent $MAIN_AGENT invite。只输出 invite_url、agent_id、tenant_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/02-main-invite.json"
   INVITE_URL=$(extract_first_invite_url "$WORK_DIR/02-main-invite.json" || true)
   if [ -z "$INVITE_URL" ]; then
     echo "未能从 $MAIN_AGENT 回复中解析 invite_url，详见 $WORK_DIR/02-main-invite.json" >&2
@@ -142,7 +233,7 @@ else
 
   echo
   echo "3) 主人把 invite URL 发给 $TARGET_AGENT 添加好友"
-  agent_message "$TARGET_AGENT" "a2a-owner-cli-$RUN_ID-target-accept" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：$TARGET_CLI accept '$INVITE_URL'。只报告 friend_id、status、context_id、requester_agent_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/03-target-accept.json"
+  agent_message_target "a2a-owner-cli-$RUN_ID-target-accept" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：openclaw dbim-mqtt --agent $TARGET_AGENT accept '$INVITE_URL'。只报告 friend_id、status、context_id、requester_agent_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/03-target-accept.json"
   FRIEND_ID=$(extract_first_number_after_friend "$WORK_DIR/03-target-accept.json" || true)
   if [ -z "$FRIEND_ID" ]; then
     echo "未能从 $TARGET_AGENT 回复中解析 friend_id，详见 $WORK_DIR/03-target-accept.json" >&2
@@ -153,7 +244,7 @@ fi
 
 echo
 echo "4) 主人让 $MAIN_AGENT 列好友并发起对话"
-agent_message "$MAIN_AGENT" "a2a-owner-cli-$RUN_ID-main-send" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：先执行 $MAIN_CLI friends，确认好友 $TARGET_AGENT 或 openclaw:$TARGET_AGENT 已 accepted；然后执行 $MAIN_CLI send openclaw:$TARGET_AGENT '来自主人真实会话测试，请回复 OWNER_AGENT_CLI_OK。'。只报告 friend_id、task_id、context_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/04-main-send.json"
+agent_message_main "a2a-owner-cli-$RUN_ID-main-send" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：先执行 openclaw dbim-mqtt --agent $MAIN_AGENT friends，确认好友 $TARGET_AGENT 或 openclaw:$TARGET_AGENT 已 accepted；然后执行 openclaw dbim-mqtt --agent $MAIN_AGENT send openclaw:$TARGET_AGENT '来自主人真实会话测试，请回复 OWNER_AGENT_CLI_OK。'。只报告 friend_id、task_id、context_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/04-main-send.json"
 
 if ! grep -Eq 'task_id|OWNER_AGENT_CLI_OK|context_id' "$WORK_DIR/04-main-send.json"; then
   echo "未能确认 $MAIN_AGENT 已创建对话任务，详见 $WORK_DIR/04-main-send.json" >&2
@@ -162,11 +253,11 @@ fi
 
 echo
 echo "5) 主人让 $TARGET_AGENT 做最小诊断"
-agent_message "$TARGET_AGENT" "a2a-owner-cli-$RUN_ID-target-check" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：$TARGET_CLI 依次执行 status、doctor。只向我报告安全字段，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/05-target-check.json"
+agent_message_target "a2a-owner-cli-$RUN_ID-target-check" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：openclaw dbim-mqtt --agent $TARGET_AGENT 依次执行 status、doctor。只向我报告安全字段，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/05-target-check.json"
 
 echo
 echo "6) 主人让 $TARGET_AGENT 反向给 $MAIN_AGENT 发消息"
-agent_message "$TARGET_AGENT" "a2a-owner-cli-$RUN_ID-target-send" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本地 dbim_mqtt CLI：先执行 $TARGET_CLI friends，确认好友 $MAIN_AGENT 或 openclaw:$MAIN_AGENT 已 accepted；然后执行 $TARGET_CLI send openclaw:$MAIN_AGENT '来自主人反向真实会话测试，请回复 OWNER_AGENT_CLI_REPLY_OK。'。只报告 friend_id、task_id、context_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/06-target-send.json"
+agent_message_target "a2a-owner-cli-$RUN_ID-target-send" "请阅读 $PUBLIC_FRIEND_TOOLS_URL ，然后使用本机 OpenClaw CLI：先执行 openclaw dbim-mqtt --agent $TARGET_AGENT friends，确认好友 $MAIN_AGENT 或 openclaw:$MAIN_AGENT 已 accepted；然后执行 openclaw dbim-mqtt --agent $TARGET_AGENT send openclaw:$MAIN_AGENT '来自主人反向真实会话测试，请回复 OWNER_AGENT_CLI_REPLY_OK。'。只报告 friend_id、task_id、context_id、target_agent_id，不要输出 auth_token、MQTT password 或 Authorization header。" "$WORK_DIR/06-target-send.json"
 
 if ! grep -Eq 'task_id|OWNER_AGENT_CLI_REPLY_OK|context_id' "$WORK_DIR/06-target-send.json"; then
   echo "未能确认 $TARGET_AGENT 已创建反向对话任务，详见 $WORK_DIR/06-target-send.json" >&2

@@ -19,6 +19,12 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
     def test_openclaw_owner_friend_cli_flow_has_valid_bash_syntax(self):
         subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "integration" / "openclaw_owner_friend_cli_flow.sh")])
 
+    def test_openclaw_owner_friend_cli_flow_supports_remote_target_agent(self):
+        body = (self.project_root / "tests" / "integration" / "openclaw_owner_friend_cli_flow.sh").read_text(encoding="utf-8")
+        self.assertIn("TARGET_OPENCLAW_HOST", body)
+        self.assertIn("run_remote_openclaw", body)
+        self.assertIn('"friends" in obj', body)
+
     def test_reset_client_script_cleans_agent_link_artifacts_without_touching_other_config(self):
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
         with tempfile.TemporaryDirectory() as tmpdir:

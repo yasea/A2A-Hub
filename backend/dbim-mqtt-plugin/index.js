@@ -2,6 +2,7 @@
 
 const { resolvePluginInstances } = require("./lib/config");
 const { DbimMqttChannel } = require("./lib/channel");
+const { createDbimMqttCli } = require("./lib/cli");
 
 const PLUGIN_ID = "dbim-mqtt";
 
@@ -13,6 +14,7 @@ module.exports = {
   register(api) {
     const configs = resolvePluginInstances(api).filter((item) => item.enabled !== false);
     const channels = configs.map((config) => new DbimMqttChannel(api, config));
+    api.registerCli(createDbimMqttCli(api), { commands: ["dbim-mqtt"] });
     api.registerService({
       id: PLUGIN_ID,
       start: async () => {
