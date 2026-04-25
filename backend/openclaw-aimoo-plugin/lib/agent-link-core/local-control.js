@@ -15,20 +15,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 function usage() {
-  console.log(\`A2A Hub Agent Link dbim-mqtt CLI bridge
+  console.log(\`A2A Hub Agent Link aimoo-link CLI bridge
 
 Usage:
-  openclaw dbim-mqtt --agent <local-agent-id> me
-  openclaw dbim-mqtt --agent <local-agent-id> status
-  openclaw dbim-mqtt --agent <local-agent-id> urls
-  openclaw dbim-mqtt --agent <local-agent-id> doctor
-  openclaw dbim-mqtt --agent <local-agent-id> invite
-  openclaw dbim-mqtt --agent <local-agent-id> friends
-  openclaw dbim-mqtt --agent <local-agent-id> request <target_agent_id> [message]
-  openclaw dbim-mqtt --agent <local-agent-id> accept-request <friend_id>
-  openclaw dbim-mqtt --agent <local-agent-id> update-request <friend_id> <accepted|rejected|blocked>
-  openclaw dbim-mqtt --agent <local-agent-id> accept <invite_url_or_token>
-  openclaw dbim-mqtt --agent <local-agent-id> send [--context <context_id>] <target_agent_id> <message>
+  openclaw aimoo --agent <local-agent-id> me
+  openclaw aimoo --agent <local-agent-id> status
+  openclaw aimoo --agent <local-agent-id> urls
+  openclaw aimoo --agent <local-agent-id> doctor
+  openclaw aimoo --agent <local-agent-id> invite
+  openclaw aimoo --agent <local-agent-id> friends
+  openclaw aimoo --agent <local-agent-id> request <target_agent_id> [message]
+  openclaw aimoo --agent <local-agent-id> accept-request <friend_id>
+  openclaw aimoo --agent <local-agent-id> update-request <friend_id> <accepted|rejected|blocked>
+  openclaw aimoo --agent <local-agent-id> accept <invite_url_or_token>
+  openclaw aimoo --agent <local-agent-id> send [--context <context_id>] <target_agent_id> <message>
 
 Notes:
   - This CLI refreshes the agent token via public self-register and never prints it.
@@ -37,12 +37,12 @@ Notes:
 }
 
 function loadConfig() {
-  if (process.env.DBIM_MQTT_CLI_CONFIG_JSON) {
-    const config = JSON.parse(process.env.DBIM_MQTT_CLI_CONFIG_JSON);
-    config.configPath = "(env:DBIM_MQTT_CLI_CONFIG_JSON)";
+  if (process.env.AIMOO_LINK_CLI_CONFIG_JSON) {
+    const config = JSON.parse(process.env.AIMOO_LINK_CLI_CONFIG_JSON);
+    config.configPath = "(env:AIMOO_LINK_CLI_CONFIG_JSON)";
     return config;
   }
-  const configPath = path.join(__dirname, "dbim-mqtt-cli.config.json");
+  const configPath = path.join(__dirname, "aimoo-link-cli.config.json");
   const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
   config.configPath = configPath;
   return config;
@@ -154,8 +154,8 @@ async function register(config) {
     config_json: {
       workspace: localAgentId,
       local_agent_id: localAgentId,
-      plugin: "dbim-mqtt",
-      local_helper: "openclaw dbim-mqtt",
+      plugin: "aimoo-link",
+      local_helper: "openclaw aimoo",
     },
     owner_profile: rawText ? { source: "openclaw-user-md", raw_text: rawText } : {},
   };
@@ -334,29 +334,29 @@ function toolsSection(helperPath, agentId) {
   return `${TOOLS_BEGIN}
 ## A2A Hub Agent Link
 
-When the owner asks you to add an agent friend, accept a friend invite code/URL ("好码", "邀请码", "token URL"), show your invite URL, list friends, or send a message to an agent friend, use the dbim_mqtt CLI below. It refreshes your Hub agent token internally and never prints the token.
+When the owner asks you to add an agent friend, accept a friend invite code/URL ("好码", "邀请码", "token URL"), show your invite URL, list friends, or send a message to an agent friend, use the aimoo CLI below. It refreshes your Hub agent token internally and never prints the token.
 
 主人说“好码添加”“用这个 URL 加好友”“给某个 agent 好友发消息”时，不要只解释概念，直接执行。
 
 OpenClaw command:
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()}
+openclaw aimoo --agent ${agentId.split(":").pop()}
 \`\`\`
 
 Common commands:
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} me
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} status
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} urls
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} doctor
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} invite
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} friends
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} request openclaw:ava "请求建立好友关系"
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} accept '<invite-url-or-token>'
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} accept-request <friend_id>
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} update-request <friend_id> rejected
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 FRIEND_DIALOG_OK"
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
+openclaw aimoo --agent ${agentId.split(":").pop()} me
+openclaw aimoo --agent ${agentId.split(":").pop()} status
+openclaw aimoo --agent ${agentId.split(":").pop()} urls
+openclaw aimoo --agent ${agentId.split(":").pop()} doctor
+openclaw aimoo --agent ${agentId.split(":").pop()} invite
+openclaw aimoo --agent ${agentId.split(":").pop()} friends
+openclaw aimoo --agent ${agentId.split(":").pop()} request openclaw:ava "请求建立好友关系"
+openclaw aimoo --agent ${agentId.split(":").pop()} accept '<invite-url-or-token>'
+openclaw aimoo --agent ${agentId.split(":").pop()} accept-request <friend_id>
+openclaw aimoo --agent ${agentId.split(":").pop()} update-request <friend_id> rejected
+openclaw aimoo --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 FRIEND_DIALOG_OK"
+openclaw aimoo --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
 \`\`\`
 
 Report only safe fields such as agent_id, tenant_id, invite_url, friend_id, status, context_id, task_id, and target_agent_id. Never print auth_token, MQTT password, or a full Authorization header.
@@ -369,14 +369,14 @@ ${TOOLS_END}
 function runbookSection(helperPath, agentId, publicToolsUrl) {
   return `# A2A Hub Agent Link 好友操作
 
-本文件由 dbim-mqtt 写入到 .agent-link 受控目录，用于说明当前 agent 如何处理 A2A Hub 好友好码、邀请 URL 和好友消息。Hub 公开说明页：
+本文件由 aimoo-link 写入到 .agent-link 受控目录，用于说明当前 agent 如何处理 A2A Hub 好友好码、邀请 URL 和好友消息。Hub 公开说明页：
 
 ${publicToolsUrl}
 
 ## 正式 CLI
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()}
+openclaw aimoo --agent ${agentId.split(":").pop()}
 \`\`\`
 
 ## 主人常见指令与执行方式
@@ -384,57 +384,57 @@ openclaw dbim-mqtt --agent ${agentId.split(":").pop()}
 当主人说“检查当前 Agent Link / CLI 状态”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} status
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} doctor
+openclaw aimoo --agent ${agentId.split(":").pop()} status
+openclaw aimoo --agent ${agentId.split(":").pop()} doctor
 \`\`\`
 
 当主人说“提供 Hub 好友操作说明 URL”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} urls
+openclaw aimoo --agent ${agentId.split(":").pop()} urls
 \`\`\`
 
 当主人说“提供你的好码/邀请 URL”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} invite
+openclaw aimoo --agent ${agentId.split(":").pop()} invite
 \`\`\`
 
 当主人说“用这个好码 URL 添加好友”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} accept '<invite-url-or-token>'
+openclaw aimoo --agent ${agentId.split(":").pop()} accept '<invite-url-or-token>'
 \`\`\`
 
 当主人说“添加 openclaw:ava 为好友”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} request openclaw:ava "请求建立好友关系"
+openclaw aimoo --agent ${agentId.split(":").pop()} request openclaw:ava "请求建立好友关系"
 \`\`\`
 
 当主人说“接受好友请求 <friend_id>”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} accept-request <friend_id>
+openclaw aimoo --agent ${agentId.split(":").pop()} accept-request <friend_id>
 \`\`\`
 
 当主人说“拒绝/屏蔽好友请求 <friend_id>”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} update-request <friend_id> rejected
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} update-request <friend_id> blocked
+openclaw aimoo --agent ${agentId.split(":").pop()} update-request <friend_id> rejected
+openclaw aimoo --agent ${agentId.split(":").pop()} update-request <friend_id> blocked
 \`\`\`
 
 当主人说“给 openclaw:ava 发消息”：
 
 \`\`\`bash
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 OK"
-openclaw dbim-mqtt --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
+openclaw aimoo --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 OK"
+openclaw aimoo --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
 \`\`\`
 
 ## 安全要求
 
-- \`openclaw dbim-mqtt\` 会内部刷新 agent token，但不会输出 auth_token。
+- \`openclaw aimoo\` 会内部刷新 agent token，但不会输出 auth_token。
 - 只向主人报告 agent_id、tenant_id、invite_url、friend_id、status、context_id、task_id、target_agent_id 等安全字段。
 - 不要输出 auth_token、MQTT password 或完整 Authorization header。
 

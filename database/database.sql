@@ -51,6 +51,7 @@ CREATE TRIGGER tr_tenants_updated_at
 
 CREATE TABLE agents (
     agent_id        TEXT PRIMARY KEY,
+    public_number   BIGINT NOT NULL UNIQUE,
     tenant_id       TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
     agent_type      TEXT NOT NULL CHECK (agent_type IN ('native', 'federated', 'bridged')),
     display_name    TEXT NOT NULL,
@@ -63,7 +64,8 @@ CREATE TABLE agents (
 );
 
 COMMENT ON TABLE agents IS '可路由的 Agent 实体';
-COMMENT ON COLUMN agents.agent_id     IS '业务主键，如 openclaw:ava';
+COMMENT ON COLUMN agents.agent_id     IS '内部技术主键，如 openclaw:<runtime_identity_key>:main';
+COMMENT ON COLUMN agents.public_number IS '公开好友号，从 10000001 起分配，用于用户添加好友和展示';
 COMMENT ON COLUMN agents.tenant_id    IS '所属租户';
 COMMENT ON COLUMN agents.agent_type   IS 'native=自研, federated=官方API接入, bridged=渠道桥接';
 COMMENT ON COLUMN agents.display_name IS '展示名称';
@@ -75,6 +77,7 @@ COMMENT ON COLUMN agents.config_json  IS '平台特定配置（base_url、token 
 CREATE INDEX idx_agents_tenant      ON agents (tenant_id);
 CREATE INDEX idx_agents_status      ON agents (status);
 CREATE INDEX idx_agents_tenant_type ON agents (tenant_id, agent_type);
+CREATE INDEX idx_agents_public_number ON agents (public_number);
 
 CREATE TRIGGER tr_agents_updated_at
     BEFORE UPDATE ON agents FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
@@ -429,15 +432,11 @@ CREATE INDEX idx_deliveries_task  ON deliveries (task_id) WHERE task_id IS NOT N
 CREATE INDEX idx_deliveries_trace ON deliveries (trace_id) WHERE trace_id IS NOT NULL;
 
 CREATE UNIQUE INDEX uq_deliveries_idempotency
-    ON deliveries (idempotency_key)
+    ON deliveries (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
 CREATE TRIGGER tr_deliveries_updated_at
     BEFORE UPDATE ON deliveries FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
-
-CREATE UNIQUE INDEX uq_deliveries_idempotency
-    ON deliveries (tenant_id, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
 
 -- =============================================================================
 -- webhook_nonces — Webhook 重放攻击防护
@@ -522,72 +521,33 @@ CREATE TRIGGER tr_routing_rules_updated_at
     BEFORE UPDATE ON routing_rules FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
 
 -- =============================================================================
--- quotes — 商务报价单
+-- agent_friends — Agent 好友关系
 -- =============================================================================
 
-CREATE TABLE quotes (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
-    context_id   TEXT NOT NULL REFERENCES contexts (context_id) ON DELETE CASCADE,
-    task_id      TEXT REFERENCES tasks (task_id) ON DELETE SET NULL,
-    status       TEXT NOT NULL DEFAULT 'draft'
-        CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'expired', 'superseded')),
-    currency     TEXT NOT NULL DEFAULT 'CNY',
-    total_amount NUMERIC(18, 4),
-    line_items   JSONB NOT NULL DEFAULT '[]',
-    metadata     JSONB NOT NULL DEFAULT '{}',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE agent_friends (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    requester_tenant_id TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    target_tenant_id    TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
+    requester_agent_id  TEXT NOT NULL,
+    target_agent_id     TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'PENDING',
+    context_id          TEXT,
+    requester_context_id TEXT,
+    target_context_id   TEXT,
+    invite_token         TEXT,
+    message             TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-COMMENT ON TABLE quotes IS '结构化商务报价单';
-COMMENT ON COLUMN quotes.tenant_id    IS '所属租户';
-COMMENT ON COLUMN quotes.status       IS 'draft/pending_approval/approved/rejected/expired/superseded';
-COMMENT ON COLUMN quotes.currency     IS '货币单位，默认 CNY';
-COMMENT ON COLUMN quotes.total_amount IS '报价总金额';
-COMMENT ON COLUMN quotes.line_items   IS '报价明细 JSON 数组';
+COMMENT ON TABLE agent_friends IS 'Agent 好友关系表';
+COMMENT ON COLUMN agent_friends.requester_tenant_id IS '发起方租户';
+COMMENT ON COLUMN agent_friends.target_tenant_id    IS '目标方租户';
 
-CREATE INDEX idx_quotes_context ON quotes (context_id);
-CREATE INDEX idx_quotes_task    ON quotes (task_id) WHERE task_id IS NOT NULL;
-CREATE INDEX idx_quotes_status  ON quotes (tenant_id, status);
-
-CREATE TRIGGER tr_quotes_updated_at
-    BEFORE UPDATE ON quotes FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
-
--- =============================================================================
--- orders — 订单
--- =============================================================================
-
-CREATE TABLE orders (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    TEXT NOT NULL REFERENCES tenants (tenant_id) ON DELETE RESTRICT,
-    quote_id     UUID REFERENCES quotes (id) ON DELETE SET NULL,
-    context_id   TEXT NOT NULL REFERENCES contexts (context_id) ON DELETE CASCADE,
-    task_id      TEXT REFERENCES tasks (task_id) ON DELETE SET NULL,
-    status       TEXT NOT NULL DEFAULT 'created'
-        CHECK (status IN ('created', 'confirmed', 'fulfilling', 'completed', 'cancelled', 'failed')),
-    currency     TEXT NOT NULL DEFAULT 'CNY',
-    total_amount NUMERIC(18, 4),
-    line_items   JSONB NOT NULL DEFAULT '[]',
-    metadata     JSONB NOT NULL DEFAULT '{}',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-COMMENT ON TABLE orders IS '订单生命周期；由报价审批通过后创建';
-COMMENT ON COLUMN orders.tenant_id    IS '所属租户';
-COMMENT ON COLUMN orders.quote_id     IS '来源报价单 ID';
-COMMENT ON COLUMN orders.status       IS 'created/confirmed/fulfilling/completed/cancelled/failed';
-COMMENT ON COLUMN orders.currency     IS '货币单位，默认 CNY';
-COMMENT ON COLUMN orders.total_amount IS '订单总金额';
-COMMENT ON COLUMN orders.line_items   IS '订单明细 JSON 数组';
-
-CREATE INDEX idx_orders_context ON orders (context_id);
-CREATE INDEX idx_orders_quote   ON orders (quote_id) WHERE quote_id IS NOT NULL;
-CREATE INDEX idx_orders_status  ON orders (tenant_id, status);
-
-CREATE TRIGGER tr_orders_updated_at
-    BEFORE UPDATE ON orders FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+CREATE INDEX idx_agent_friends_requester ON agent_friends (requester_agent_id);
+CREATE INDEX idx_agent_friends_target    ON agent_friends (target_agent_id);
+CREATE INDEX idx_agent_friends_tenant    ON agent_friends (tenant_id);
 
 -- =============================================================================
 -- task_state_transitions — 任务状态变更流水（状态机审计专表）

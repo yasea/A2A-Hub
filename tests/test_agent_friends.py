@@ -50,10 +50,13 @@ class AgentFriendsTest(unittest.IsolatedAsyncioTestCase):
             "can_send_message": False,
             "message": "hi",
         }
-        with patch("app.api.routes_agent_friends.FriendService") as svc_cls:
+        with patch("app.api.routes_agent_friends.FriendService") as svc_cls, patch(
+            "app.api.routes_agent_friends.agent_link_service"
+        ) as agent_link:
             svc = svc_cls.return_value
             svc.create_request = AsyncMock(return_value=friend)
             svc.view_payload = Mock(return_value=payload)
+            agent_link.notify_friend_request = AsyncMock()
             response = await create_friend_request(
                 "openclaw:alice",
                 FriendCreateRequest(target_agent_id="openclaw:bob", message="hi"),
@@ -61,6 +64,16 @@ class AgentFriendsTest(unittest.IsolatedAsyncioTestCase):
                 tenant,
             )
         self.assertEqual(response.data.peer_agent_id, "openclaw:bob")
+        agent_link.notify_friend_request.assert_awaited_once_with(
+            requester_tenant_id="tenant_alice",
+            requester_agent_id="openclaw:alice",
+            requester_public_number=None,
+            target_tenant_id="tenant_bob",
+            target_agent_id="openclaw:bob",
+            target_public_number=None,
+            friend_id=1,
+            message="hi",
+        )
         db.commit.assert_awaited_once()
 
     async def test_update_friend_accept_uses_current_agent_view(self):
@@ -234,6 +247,41 @@ class AgentFriendsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_req.context_id, "ctx_bob")
         self.assertEqual(sent_req.metadata["friend_id"], "1")
         self.assertEqual(sent_req.metadata["source_agent_id"], "openclaw:alice")
+
+    async def test_agent_link_send_message_accepts_public_number_target(self):
+        db = AsyncMock()
+        request = SimpleNamespace()
+        req = AgentLinkSendMessageRequest(
+            target_agent_id="10000002",
+            parts=[MessagePart(type="text/plain", text="hello bob")],
+        )
+        with patch("app.api.routes_agent_link._require_agent_link_identity", new=AsyncMock(return_value=("auth", {}, "tenant_alice", "openclaw:alice"))), patch(
+            "app.api.routes_agent_link.AsyncSessionLocal",
+            return_value=AsyncSessionContext(db),
+        ), patch("app.api.routes_agent_link.FriendService") as svc_cls, patch(
+            "app.api.routes_agent_link.create_and_dispatch_message_task",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    task_id="task_002",
+                    state="WORKING",
+                    context_id="ctx_bob",
+                    model_dump=lambda: {
+                        "task_id": "task_002",
+                        "state": "WORKING",
+                        "context_id": "ctx_bob",
+                        "target_agent_id": "openclaw:bob",
+                    },
+                )
+            ),
+        ) as dispatch_mock:
+            svc_cls.return_value.resolve_target_context = AsyncMock(
+                return_value=("tenant_bob", "ctx_bob", {"mode": "friend", "friend_id": "1"}, "openclaw:bob")
+            )
+            response = await agent_link_send_message(req, request)
+
+        sent_req = dispatch_mock.await_args.args[0]
+        self.assertEqual(sent_req.target_agent_id, "openclaw:bob")
+        self.assertEqual(response.data["target_agent_id"], "openclaw:bob")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i 's/dbim-mqtt/aimoo-link/g' /mnt/win_E/develop/project/A2A-Hub/backend/app/api/routes_agent_link.py)",
+      "Bash(sed -i 's/dbim_mqtt/aimoo_mqtt/g' /mnt/win_E/develop/project/A2A-Hub/backend/app/api/routes_agent_link.py)",
+      "Bash(sed -i 's/openclaw dbim-mqtt/openclaw aimoo/g' /mnt/win_E/develop/project/A2A-Hub/backend/app/api/routes_agent_link.py)"
+    ]
+  }
+}

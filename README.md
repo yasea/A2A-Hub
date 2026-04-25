@@ -6,7 +6,7 @@
 
 - FastAPI 后端
 - Postgres / Redis / Mosquitto 的根目录 Docker Compose 部署
-- OpenClaw `dbim-mqtt` 插件与安装脚本分发
+- OpenClaw `aimoo-link` 插件与安装脚本分发
 - 公开接入入口 `/agent-link/prompt` 与 `/agent-link/connect`
 - service 发布、发现和跨租户多轮对话能力
 - 错误观测与 `/docs` 联调入口

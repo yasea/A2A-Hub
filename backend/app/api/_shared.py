@@ -16,7 +16,7 @@ from app.services.error_event_service import ErrorEventService
 from app.services.mosquitto_auth_sync import build_default_mosquitto_auth_sync_service
 
 OPENCLAW_CONNECT_MD_PATH = Path(__file__).resolve().parents[1] / "static" / "openclaw_agent_connect.md"
-DBIM_MQTT_PLUGIN_PATH = Path(__file__).resolve().parents[2] / "dbim-mqtt-plugin"
+AIMOO_LINK_PLUGIN_PATH = Path(__file__).resolve().parents[2] / "openclaw-aimoo-plugin"
 
 
 def _external_base_url(request: Request | None = None) -> str:
@@ -38,8 +38,8 @@ def _openclaw_urls(request: Request | None = None) -> dict[str, str]:
         "onboarding_url": f"{base_url}/openclaw/agents/connect",
         "register_url": f"{base_url}/v1/openclaw/agents/register",
         "self_register_url": f"{base_url}/v1/agent-link/self-register",
-        "plugin_download_url": f"{base_url}/agent-link/plugins/dbim-mqtt.tar.gz",
-        "openclaw_install_script_url": f"{base_url}/agent-link/install/openclaw-dbim-mqtt.sh",
+        "plugin_download_url": f"{base_url}/agent-link/plugins/aimoo-link.tar.gz",
+        "openclaw_install_script_url": f"{base_url}/agent-link/install/openclaw-aimoo-link.sh",
         "agent_prompt_url": f"{base_url}/agent-link/prompt",
         "friend_tools_url": f"{base_url}/agent-link/friend-tools",
         "install_report_url": f"{base_url}/v1/agent-link/install-report",
@@ -60,6 +60,46 @@ def _normalize_openclaw_agent_id(agent_id: str) -> str:
     return value if ":" in value else f"openclaw:{value}"
 
 
+def _sanitize_agent_identity_part(value: str | None, *, fallback: str = "agent") -> str:
+    import re
+
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
+    return (normalized or fallback)[:48]
+
+
+def _runtime_local_agent_id(agent_id: str, config_json: dict[str, Any] | None = None) -> str:
+    config = config_json or {}
+    for key in ("local_agent_id", "workspace"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return _sanitize_agent_identity_part(value.split(":")[-1])
+    return _sanitize_agent_identity_part(str(agent_id or "agent").split(":")[-1])
+
+
+def _namespaced_openclaw_agent_id(agent_id: str, tenant_id: str, config_json: dict[str, Any] | None = None) -> str:
+    """Build the stable platform id used by public Agent Link self-registration.
+
+    Local OpenClaw names like "main" are common. The platform id must include a
+    runtime key so different users and different machines do not fight over the
+    global agents.agent_id primary key or the MQTT client id.
+    """
+
+    normalized = _normalize_openclaw_agent_id(agent_id)
+    if len(normalized.split(":")) >= 3:
+        return normalized
+    config = config_json or {}
+    local_id = _runtime_local_agent_id(normalized, config)
+    identity_key = (
+        config.get("runtime_identity_key")
+        or config.get("agent_identity_key")
+        or config.get("runtimeIdentityKey")
+    )
+    safe_key = _sanitize_agent_identity_part(str(identity_key or ""), fallback="")
+    if not safe_key:
+        safe_key = _sanitize_agent_identity_part(str(tenant_id).replace("owner_", ""), fallback="owner")
+    return f"openclaw:{safe_key}:{local_id}"
+
+
 def _owner_profile_key(owner_profile: dict[str, Any]) -> str:
     for key in ("owner_id", "user_id", "email", "username", "name"):
         value = str(owner_profile.get(key) or "").strip()
@@ -75,7 +115,7 @@ def _short_openclaw_agent_id(agent_id: str) -> str:
     value = str(agent_id or "").strip()
     if not value:
         return "agent"
-    return value.split(":", 1)[1] if ":" in value else value
+    return value.split(":")[-1] if ":" in value else value
 
 
 def _owner_tenant_id(owner_profile: dict[str, Any]) -> str:

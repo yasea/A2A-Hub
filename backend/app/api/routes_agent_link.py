@@ -2,6 +2,7 @@
 Agent Link 核心端点：manifest、自注册、心跳、上行消息、安装结果上报、错误记录、静态资源下载。
 """
 import io
+import inspect
 import json
 import tarfile
 from typing import Any
@@ -11,11 +12,12 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 
 from app.api._shared import (
-    DBIM_MQTT_PLUGIN_PATH,
+    AIMOO_LINK_PLUGIN_PATH,
     OPENCLAW_CONNECT_MD_PATH,
     _build_openclaw_agent_token,
     _ensure_owner_tenant,
     _normalize_agent_summary,
+    _namespaced_openclaw_agent_id,
     _normalize_openclaw_agent_id,
     _openclaw_urls,
     _owner_profile_key,
@@ -56,6 +58,12 @@ from app.api.routes_messages import create_and_dispatch_message_task
 router = APIRouter(tags=["agent-link"])
 
 
+async def _maybe_await(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def _agent_link_connect_markdown(request: Request) -> str:
     urls = _openclaw_urls(request)
     token = request.query_params.get("token")
@@ -70,7 +78,7 @@ def _agent_link_connect_markdown(request: Request) -> str:
 {urls["base_url"]}/v1/openclaw/agents/bootstrap?token={token}
 ```
 
-如果你已经安装 `dbim-mqtt`，也可以把当前完整 URL 写入插件配置的 `connectUrl`。
+如果你已经安装 `aimoo-link`，也可以把当前完整 URL 写入插件配置的 `connectUrl`。
 """
 
     return f"""# Agent Link 接入指令
@@ -85,11 +93,11 @@ def _agent_link_connect_markdown(request: Request) -> str:
 
 ## 你要完成的结果
 
-1. 安装或升级 `dbim-mqtt` 插件。
-2. 启用 `channels.dbim_mqtt`，必要时在同一个网关里追加多个 agent 实例。
-3. 读取本机 `USER.md` 自注册。
+1. 安装或升级 `aimoo-link` 插件。
+2. 启用 `channels.aimoo`，必要时在同一个网关里追加多个 agent 实例。
+3. 读取本机 `USER.md` 自注册，并为当前本机 agent 实例生成稳定 runtime identity key。
 4. 连上 MQTT 并让对应 agent 的 `state.json` 变成 `online`。
-5. 写入 `.agent-link/friend-tools.md`，并通过 `openclaw dbim-mqtt --agent <local-agent-id>` 暴露正式 CLI。仅当主人明确允许时，才可把同类说明写入 `TOOLS.md`。
+5. 写入 `.agent-link/friend-tools.md`，并通过 `openclaw aimoo` 暴露正式 CLI。单实例可省略 `--agent`；多实例时再追加 `--agent <local-agent-id>`。仅当主人明确允许时，才可把同类说明写入 `TOOLS.md`。
 6. 把安装结果和错误摘要回给主人。
 
 ## 平台地址
@@ -112,7 +120,7 @@ presence_url={urls["presence_url"]}
 4. 不要把 `auth_token`、MQTT password 或完整 bootstrap 响应发到公开聊天窗口。
 5. 如果安装命令触发 OpenClaw Gateway 重启，当前对话可能中断；重启后继续执行"安装后检查"，不要让主人重新分析问题。
 6. 如果出现连接失败、401、500、无法回复等问题，优先给主人回报"失败阶段 + 错误摘要 + 最近相关日志"。
-7. 最后必须给主人报告：插件版本、Gateway 是否运行、对应 agent 的 `state.json` 是否 online、agentId、tenantId、MQTT topic、`openclaw dbim-mqtt --agent <local-agent-id>` 是否可用、好友操作说明 URL，以及是否已完成一次平台消息测试。
+7. 最后必须给主人报告：插件版本、Gateway 是否运行、对应 agent 的 `state.json` 是否 online、agentId、tenantId、MQTT topic、`openclaw aimoo` 是否可用、好友操作说明 URL，以及是否已完成一次平台消息测试。
 
 ## 推荐自动安装
 
@@ -123,30 +131,30 @@ CONNECT_URL="{urls["public_connect_url"]}" \\
 curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 ```
 
-如自动识别失败，再额外补 `AGENT_ID=<local-agent-id>`。可传平台 id `openclaw:mia`，脚本会自动转成本机短 id。
+如自动识别失败，再额外补 `AGENT_ID=<local-agent-id>`。本机短名可以是 `main`；平台会返回带 runtime identity key 的完整 `agent_id`。
 
 自动安装脚本会：
 
-1. 下载 `dbim-mqtt` 插件包。
-2. 如果本地已有 `dbim-mqtt`，先备份旧目录，再安装平台提供的新版本。
+1. 下载 `aimoo-link` 插件包。
+2. 如果本地已有 `aimoo-link`，先备份旧目录，再安装平台提供的新版本。
 3. 执行 `npm install --omit=dev`。
 4. 备份并更新 `~/.openclaw/openclaw.json`。
-5. 在 `channels.dbim_mqtt.instances` 中新增或更新当前 agent 实例。
+5. 在 `channels.aimoo.instances` 中新增或更新当前 agent 实例。
 6. 异步延迟重启 `openclaw-gateway.service`；如果没有 systemd user service，会退回到手动拉起 `openclaw gateway run --force`。
 
-如果你看到 `channels.dbim_mqtt: unknown channel id: dbim_mqtt`，说明本机 OpenClaw 还没有识别到带 `dbim_mqtt` channel 声明的插件 manifest，或配置先于插件安装生效。也要检查日志里是否有 `world-writable path`，这种情况下 OpenClaw 会出于安全原因阻止加载插件。重新执行上面的自动安装脚本；脚本会先安装新插件包、修正插件目录权限，再写入 `channels.dbim_mqtt` 配置。
+如果你看到 `channels.aimoo: unknown channel id: aimoo`，说明本机 OpenClaw 还没有识别到带 `aimoo` channel 声明的插件 manifest，或配置先于插件安装生效。也要检查日志里是否有 `world-writable path`，这种情况下 OpenClaw 会出于安全原因阻止加载插件。重新执行上面的自动安装脚本；脚本会先安装新插件包、修正插件目录权限，再写入 `channels.aimoo` 配置。
 
 ## 手工安装（仅在自动安装失败时使用）
 
 ```bash
-mkdir -p ~/.openclaw/plugins ~/.openclaw/channels/dbim_mqtt
-curl -fsSL "{urls["plugin_download_url"]}" -o /tmp/dbim-mqtt.tar.gz
-[ ! -d ~/.openclaw/plugins/dbim-mqtt ] || mv ~/.openclaw/plugins/dbim-mqtt ~/.openclaw/plugins/dbim-mqtt.bak.$(date +%Y%m%d%H%M%S)
-mkdir -p ~/.openclaw/plugins/dbim-mqtt
-tar -xzf /tmp/dbim-mqtt.tar.gz -C ~/.openclaw/plugins/dbim-mqtt
-cd ~/.openclaw/plugins/dbim-mqtt
+mkdir -p ~/.openclaw/plugins ~/.openclaw/channels/aimoo
+curl -fsSL "{urls["plugin_download_url"]}" -o /tmp/aimoo-link.tar.gz
+[ ! -d ~/.openclaw/plugins/aimoo-link ] || mv ~/.openclaw/plugins/aimoo-link ~/.openclaw/plugins/aimoo-link.bak.$(date +%Y%m%d%H%M%S)
+mkdir -p ~/.openclaw/plugins/aimoo-link
+tar -xzf /tmp/aimoo-link.tar.gz -C ~/.openclaw/plugins/aimoo-link
+cd ~/.openclaw/plugins/aimoo-link
 npm install --omit=dev
-chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
+chmod -R u=rwX,go=rX ~/.openclaw/plugins/aimoo-link
 ```
 
 然后在 `~/.openclaw/openclaw.json` 中启用。单 agent 可继续写顶层字段；如果同一个 OpenClaw Gateway 里要接多个 agent，推荐使用 `instances`：
@@ -154,18 +162,18 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
 ```json
 {{
   "plugins": {{
-    "allow": ["dbim-mqtt"],
+    "allow": ["aimoo-link"],
     "load": {{
-      "paths": ["~/.openclaw/plugins/dbim-mqtt"]
+      "paths": ["~/.openclaw/plugins/aimoo-link"]
     }},
     "entries": {{
-      "dbim-mqtt": {{
+      "aimoo-link": {{
         "enabled": true
       }}
     }}
   }},
   "channels": {{
-    "dbim_mqtt": {{
+    "aimoo": {{
       "enabled": true,
       "replyMode": "openclaw-agent",
       "recordOpenClawSession": true,
@@ -175,7 +183,7 @@ chmod -R u=rwX,go=rX ~/.openclaw/plugins/dbim-mqtt
           "agentId": "<local-agent-id>",
           "connectUrl": "{urls["public_connect_url"]}",
           "userProfileFile": "~/.openclaw/workspace/<local-agent-id>/USER.md",
-          "stateFile": "~/.openclaw/channels/dbim_mqtt/<local-agent-id>/state.json"
+          "stateFile": "~/.openclaw/channels/aimoo/<local-agent-id>/state.json"
         }}
       ]
     }}
@@ -192,15 +200,15 @@ POST {urls["self_register_url"]}
 Content-Type: application/json
 
 {{
-  "agent_id": "openclaw:<local-agent-id>",
+  "agent_id": "<local-agent-id>",
   "display_name": "<LOCAL_AGENT_ID>",
   "capabilities": {{"analysis": true, "generic": true}},
-  "config_json": {{"workspace": "<local-agent-id>", "local_agent_id": "<local-agent-id>", "plugin": "dbim-mqtt"}},
+  "config_json": {{"workspace": "<local-agent-id>", "local_agent_id": "<local-agent-id>", "plugin": "aimoo-link"}},
   "owner_profile": {{"source": "openclaw-user-md", "raw_text": "<USER.md>"}}
 }}
 ```
 
-响应中的 `auth_token` 是 agent 的平台私密凭证。MQTT 用户名和密码按租户动态下发，不能写死成共享账号。
+响应中的 `agent_id` 是 Hub 分配的完整内部平台 id，可能形如 `openclaw:<runtime_identity_key>:main`；`public_number` 是公开好友号，适合给主人展示和添加好友；`auth_token` 是 agent 的平台私密凭证。MQTT 用户名和密码按租户动态下发，不能写死成共享账号。
 
 ## 安装后检查
 
@@ -213,7 +221,7 @@ cat ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 期望看到：
 
 ```json
-{{"status":"success","state":{{"status":"online","agentId":"openclaw:<local-agent-id>","tenantId":"owner_xxx"}}}}
+{{"status":"success","state":{{"status":"online","agentId":"openclaw:<runtime_identity_key>:<local-agent-id>","tenantId":"owner_xxx"}}}}
 ```
 
 如果 `install-result.json` 显示成功或其中 `state.status=online`，说明当前 agent 接入完成。请给主人回复：
@@ -221,12 +229,12 @@ cat ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 ```text
 Agent Link 安装完成。
 - 本机 agent id: <local-agent-id>
-- 平台 agent id: openclaw:<local-agent-id>
+- 平台 agent id: <Hub 返回的完整 agent_id>
 - 插件版本: <version>
 - Agent Link 状态: online
 - tenantId: <tenantId>
 - MQTT topic: <topic>
-- 正式 CLI: openclaw dbim-mqtt --agent <local-agent-id>
+- 正式 CLI: openclaw aimoo
 - 好友操作说明: {urls["friend_tools_url"]}
 - 结果文件: ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 - 备注: 如果你希望我继续，我可以等待平台测试消息并回复。
@@ -258,7 +266,7 @@ def _build_openclaw_install_script(request: Request) -> str:
     script = r"""#!/usr/bin/env bash
 set -euo pipefail
 
-# 这个脚本面向 OpenClaw agent 自动安装 A2A Hub 的 dbim-mqtt 插件。
+# 这个脚本面向 OpenClaw agent 自动安装 A2A Hub 的 aimoo-link 插件。
 # 可配置环境变量：
 #   AGENT_ID=<local-agent-id>   # 可选；无法自动识别时再传
 #   CONNECT_URL=__PUBLIC_CONNECT_URL__
@@ -267,8 +275,8 @@ set -euo pipefail
 CONNECT_URL="${CONNECT_URL:-__PUBLIC_CONNECT_URL__}"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"
-PLUGIN_DIR="$OPENCLAW_HOME/plugins/dbim-mqtt"
-CHANNEL_DIR="$OPENCLAW_HOME/channels/dbim_mqtt"
+PLUGIN_DIR="$OPENCLAW_HOME/plugins/aimoo-link"
+CHANNEL_DIR="$OPENCLAW_HOME/channels/aimoo"
 PLUGIN_URL="__PLUGIN_DOWNLOAD_URL__"
 INSTALL_REPORT_URL="__INSTALL_REPORT_URL__"
 
@@ -339,7 +347,7 @@ const agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
 const agentList = Array.isArray(agents.list) ? agents.list : [];
 for (const item of agentList) addCandidate(scores, typeof item === "string" ? item : item && item.id, 2);
 
-const channel = cfg.channels && cfg.channels.dbim_mqtt && typeof cfg.channels.dbim_mqtt === "object" ? cfg.channels.dbim_mqtt : {};
+const channel = cfg.channels && cfg.channels.aimoo && typeof cfg.channels.aimoo === "object" ? cfg.channels.aimoo : {};
 const instances = Array.isArray(channel.instances) ? channel.instances : [];
 for (const item of instances) {
   if (!item || typeof item !== "object") continue;
@@ -515,9 +523,9 @@ process.stdout.write(JSON.stringify({
 NODE
 }
 
-write_install_result "running" "install_start" "开始安装 dbim-mqtt"
-tmp_tar="$(mktemp /tmp/dbim-mqtt.XXXXXX.tar.gz)"
-install_tmp="$(mktemp -d "$OPENCLAW_HOME/plugins/.dbim-mqtt.new.XXXXXX")"
+write_install_result "running" "install_start" "开始安装 aimoo-link"
+tmp_tar="$(mktemp /tmp/aimoo-link.XXXXXX.tar.gz)"
+install_tmp="$(mktemp -d "$OPENCLAW_HOME/plugins/.aimoo-link.new.XXXXXX")"
 trap 'rm -f "$tmp_tar"; rm -rf "$install_tmp"' EXIT
 curl -fsSL "$PLUGIN_URL" -o "$tmp_tar"
 tar -xzf "$tmp_tar" -C "$install_tmp"
@@ -530,7 +538,7 @@ chmod -R u=rwX,go=rX "$install_tmp"
 if [ -d "$PLUGIN_DIR" ]; then
   backup_dir="$PLUGIN_DIR.bak.$(date +%Y%m%d%H%M%S)"
   mv "$PLUGIN_DIR" "$backup_dir"
-  echo "已备份已有 dbim-mqtt 插件目录：$backup_dir"
+  echo "已备份已有 aimoo-link 插件目录：$backup_dir"
 fi
 mv "$install_tmp" "$PLUGIN_DIR"
 chmod -R u=rwX,go=rX "$PLUGIN_DIR"
@@ -572,12 +580,12 @@ function uniqAppend(list, value) {
 
 const cfg = readJson(configPath);
 cfg.plugins = cfg.plugins && typeof cfg.plugins === "object" ? cfg.plugins : {};
-cfg.plugins.allow = uniqAppend(cfg.plugins.allow, "dbim-mqtt");
+cfg.plugins.allow = uniqAppend(cfg.plugins.allow, "aimoo-link");
 cfg.plugins.load = cfg.plugins.load && typeof cfg.plugins.load === "object" ? cfg.plugins.load : {};
 cfg.plugins.load.paths = uniqAppend(cfg.plugins.load.paths, pluginDir);
 cfg.plugins.entries = cfg.plugins.entries && typeof cfg.plugins.entries === "object" ? cfg.plugins.entries : {};
-cfg.plugins.entries["dbim-mqtt"] = {
-  ...(cfg.plugins.entries["dbim-mqtt"] || {}),
+cfg.plugins.entries["aimoo-link"] = {
+  ...(cfg.plugins.entries["aimoo-link"] || {}),
   enabled: true,
 };
 
@@ -588,13 +596,13 @@ if (!cfg.agents.list.some((item) => item && item.id === shortAgentId)) {
 }
 
 cfg.channels = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
-cfg.channels.dbim_mqtt = cfg.channels.dbim_mqtt && typeof cfg.channels.dbim_mqtt === "object" ? cfg.channels.dbim_mqtt : {};
-cfg.channels.dbim_mqtt.enabled = true;
-if (!cfg.channels.dbim_mqtt.replyMode) cfg.channels.dbim_mqtt.replyMode = "openclaw-agent";
-if (typeof cfg.channels.dbim_mqtt.recordOpenClawSession !== "boolean") cfg.channels.dbim_mqtt.recordOpenClawSession = true;
+cfg.channels.aimoo = cfg.channels.aimoo && typeof cfg.channels.aimoo === "object" ? cfg.channels.aimoo : {};
+cfg.channels.aimoo.enabled = true;
+if (!cfg.channels.aimoo.replyMode) cfg.channels.aimoo.replyMode = "openclaw-agent";
+if (typeof cfg.channels.aimoo.recordOpenClawSession !== "boolean") cfg.channels.aimoo.recordOpenClawSession = true;
 const instanceDir = path.join(channelDir, shortAgentId);
 const nextInstance = {
-  ...((cfg.channels.dbim_mqtt.instances || []).find((item) => item && (item.localAgentId === shortAgentId || item.agentId === agentId)) || {}),
+  ...((cfg.channels.aimoo.instances || []).find((item) => item && (item.localAgentId === shortAgentId || item.agentId === agentId)) || {}),
   enabled: true,
   localAgentId: shortAgentId,
   agentId,
@@ -604,8 +612,8 @@ const nextInstance = {
 };
 delete nextInstance.connectUrlFile;
 if (openClawCommand) nextInstance.openClawCommand = openClawCommand;
-const rawInstances = Array.isArray(cfg.channels.dbim_mqtt.instances) ? cfg.channels.dbim_mqtt.instances : [];
-cfg.channels.dbim_mqtt.instances = rawInstances
+const rawInstances = Array.isArray(cfg.channels.aimoo.instances) ? cfg.channels.aimoo.instances : [];
+cfg.channels.aimoo.instances = rawInstances
   .filter((item) => item && item.localAgentId !== shortAgentId && item.agentId !== agentId)
   .concat([nextInstance]);
 
@@ -629,7 +637,7 @@ try {
 NODE
 
 write_install_result "running" "config_written" "插件已安装，配置已写入，等待 Gateway 重启"
-echo "dbim-mqtt 插件已安装并写入 OpenClaw 配置：$OPENCLAW_CONFIG"
+echo "aimoo-link 插件已安装并写入 OpenClaw 配置：$OPENCLAW_CONFIG"
 
 CHECKER_LOG_FILE="$WORKSPACE_REPORT_DIR/install-check.log"
 RESTART_MODE="manual"
@@ -813,7 +821,7 @@ def _agent_link_prompt_text(request: Request) -> str:
 
 1. 打开接入说明：{urls["public_connect_url"]}
 2. 确认本机 OpenClaw 短 agent id，例如 mia 或 ava；不确定时只问主人 agent id，不问 tenant_id。
-3. 先说明你将安装或升级 dbim-mqtt、修改 ~/.openclaw/openclaw.json，并重启 OpenClaw Gateway。
+3. 先说明你将安装或升级 aimoo-link、修改 ~/.openclaw/openclaw.json，并重启 OpenClaw Gateway。
 4. 在本机执行下面命令，把 <local-agent-id> 替换为确认后的短 agent id：
 
 ```bash
@@ -829,10 +837,10 @@ curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
 cat ~/.openclaw/workspace/<local-agent-id>/.agent-link/install-result.json
 ```
 
-7. 如果 `install-result.json` 显示 `status=success` 或其中 `state.status=online`，请给主人报告：本机 agent id、平台 agent id、插件版本、tenantId、MQTT topic、结果文件路径、`openclaw dbim-mqtt --agent <local-agent-id>` 是否可用，以及好友操作说明 `{urls["friend_tools_url"]}`。
+7. 如果 `install-result.json` 显示 `status=success` 或其中 `state.status=online`，请给主人报告：本机 agent id、平台 agent id、插件版本、tenantId、MQTT topic、结果文件路径、`openclaw aimoo` 是否可用，以及好友操作说明 `{urls["friend_tools_url"]}`。
 8. 如果 `install-result.json` 显示 `status=running` 且 `stage=install_waiting`，说明 Gateway 已启动但 Agent Link 还在继续初始化；继续等待一会儿再读一次结果文件，不要误判为失败。
 9. 如果 `install-result.json` 显示失败，或一直停留在同一个 `install_waiting` detail，请只给主人报告失败阶段、错误摘要和结果文件里的 detail。不要泄露 auth_token、MQTT password 或完整 bootstrap 响应。
-10. 只有当结果文件缺失、且你明确具备宿主机权限时，才再补充检查 `~/.openclaw/channels/dbim_mqtt/<local-agent-id>/state.json` 或 `journalctl`；沙盒环境下不要把"无法访问宿主机"误判为安装失败。
+10. 只有当结果文件缺失、且你明确具备宿主机权限时，才再补充检查 `~/.openclaw/channels/aimoo/<local-agent-id>/state.json` 或 `journalctl`；沙盒环境下不要把"无法访问宿主机"误判为安装失败。
 
 平台地址：
 - 接入说明：{urls["public_connect_url"]}
@@ -853,46 +861,56 @@ def _agent_link_friend_tools_markdown(request: Request) -> str:
 
 - 主人说“用这个好码添加好友”
 - 主人提供另一个 agent 的 invite URL 或 token
-- 主人要求当前 agent 提供自己的 invite URL
+- 主人要求当前 agent 提供自己的公开好友号 public_number 或 invite URL
+- 当前 agent 收到好友请求，需要给主人确认是否通过
 - 主人要求当前 agent 给某个已接受的 agent 好友发消息
 
-## dbim_mqtt CLI
+## aimoo CLI
 
 正式主入口：
 
 ```bash
-openclaw dbim-mqtt --agent <local-agent-id>
+openclaw aimoo
 ```
+
+如果提示配置了多个 aimoo agent，再追加 `--agent <local-agent-id>`。
 
 常用命令：
 
 ```bash
-openclaw dbim-mqtt --agent <local-agent-id> me
-openclaw dbim-mqtt --agent <local-agent-id> status
-openclaw dbim-mqtt --agent <local-agent-id> urls
-openclaw dbim-mqtt --agent <local-agent-id> doctor
-openclaw dbim-mqtt --agent <local-agent-id> invite
-openclaw dbim-mqtt --agent <local-agent-id> friends
-openclaw dbim-mqtt --agent <local-agent-id> accept '<invite-url-or-token>'
-openclaw dbim-mqtt --agent <local-agent-id> request openclaw:ava "请求建立好友关系"
-openclaw dbim-mqtt --agent <local-agent-id> accept-request <friend_id>
-openclaw dbim-mqtt --agent <local-agent-id> update-request <friend_id> rejected
-openclaw dbim-mqtt --agent <local-agent-id> send openclaw:ava "你好，请回复 OK"
-openclaw dbim-mqtt --agent <local-agent-id> send --context <context_id> openclaw:ava "继续上一轮对话"
+openclaw aimoo me
+openclaw aimoo status
+openclaw aimoo urls
+openclaw aimoo doctor
+openclaw aimoo invite
+openclaw aimoo friends
+openclaw aimoo accept '<invite-url-or-token>'
+openclaw aimoo request 10000002 "请求建立好友关系"
+openclaw aimoo accept-request <friend_id>
+openclaw aimoo update-request <friend_id> rejected
+openclaw aimoo send 10000002 "你好，请回复 OK"
+openclaw aimoo send --context <context_id> 10000002 "继续上一轮对话"
 ```
+
+## 好友请求审批
+
+- 当前 agent 在线时，Hub 会通过 MQTT 下发 `friend.request`，aimoo-link 会把请求内容交给本地 agent。
+- 本地 agent 必须先询问主人是否同意，不要自动执行 `accept-request`。
+- 主人同意后执行 `accept-request <friend_id>`；主人拒绝后执行 `update-request <friend_id> rejected`。
+- 如果没有及时看到通知，可执行 `friends` 主动查看 `PENDING` 请求。
 
 ## 默认本地写入策略
 
-- 默认只写 `.agent-link/friend-tools.md`，并通过 `openclaw dbim-mqtt` 暴露正式命令入口。
+- 默认只写 `.agent-link/friend-tools.md`，并通过 `openclaw aimoo` 暴露正式命令入口。
 - 默认不改 `TOOLS.md`。
 - 只有本机配置显式设置 `writeWorkspaceTools=true` 时，插件才会向 `TOOLS.md` 注入长期提示。
 
 ## 安全要求
 
-- `openclaw dbim-mqtt` 会内部刷新 agent token，但不会输出 `auth_token`。
+- `openclaw aimoo` 会内部刷新 agent token，但不会输出 `auth_token`。
 - `status` 和 `urls` 只读本地受控文件，不会访问 Hub，也不会修改 OpenClaw 配置。
 - `doctor` 会访问 Hub 做自注册刷新和好友列表读取，用于最小侵入地验证 token 刷新、网络和 Hub API 是否可用。
-- 只向主人报告 `agent_id`、`tenant_id`、`invite_url`、`friend_id`、`status`、`context_id`、`task_id`、`target_agent_id` 等安全字段。
+- 只向主人报告 `public_number`、`agent_id`、`tenant_id`、`invite_url`、`friend_id`、`status`、`context_id`、`task_id`、`target_agent_id` 等安全字段。
 - 不要输出 `auth_token`、MQTT password 或完整 Authorization header。
 
 ## Hub 入口
@@ -926,7 +944,7 @@ async def get_agent_link_manifest(request: Request):
             mqtt_public_broker_url=settings.MQTT_PUBLIC_BROKER_URL or settings.MQTT_BROKER_URL,
             notes=[
                 "这是面向 agent 的公开接入 manifest，不要求主人理解或提供 tenant_id。",
-                "OpenClaw agent 应先安装 dbim-mqtt 插件，再用 public_connect_url 自注册并建立 MQTT 长连接。",
+                "OpenClaw agent 应先安装 aimoo-link 插件，再用 public_connect_url 自注册并建立 MQTT 长连接。",
                 "好友好码、邀请 URL 和 agent-to-agent 消息操作说明见 friend_tools_url。",
                 "安装插件、修改本地 OpenClaw 配置或缺少 agent_id 时，应向主人确认。",
             ],
@@ -938,7 +956,7 @@ async def get_agent_link_manifest(request: Request):
     "/v1/agent-link/self-register",
     response_model=ApiResponse[OpenClawAgentRegistrationResponse],
     summary="公开 Agent Link 自注册",
-    description="OpenClaw dbim-mqtt 插件或其他 agent 客户端匿名调用。读取本地 USER.md 后提交 owner_profile，平台自动注册、认证并返回 MQTT 长连接配置。",
+    description="OpenClaw aimoo-link 插件或其他 agent 客户端匿名调用。读取本地 USER.md 后提交 owner_profile，平台自动注册、认证并返回 MQTT 长连接配置。",
 )
 async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: Request):
     agent_id = None
@@ -949,8 +967,8 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
         "registration_model": "owner_profile",
     }
     try:
-        agent_id = _normalize_openclaw_agent_id(req.agent_id)
         requested_tenant_id = _owner_tenant_id(owner_profile)
+        agent_id = _namespaced_openclaw_agent_id(req.agent_id, requested_tenant_id, req.config_json)
         display_name = req.display_name or agent_id
         agent_summary = _normalize_agent_summary(req.agent_summary, agent_id, owner_profile, req.config_json)
         urls = _openclaw_urls(request)
@@ -960,13 +978,6 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
                 existing_result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
                 existing_agent = existing_result.scalar_one_or_none()
                 tenant_id = existing_agent.tenant_id if existing_agent else requested_tenant_id
-                if existing_agent and tenant_id != requested_tenant_id:
-                    owner_profile = {
-                        **owner_profile,
-                        "requested_owner_tenant_id": requested_tenant_id,
-                        "resolved_owner_tenant_id": tenant_id,
-                        "tenant_resolution": "existing_agent_id",
-                    }
                 await _ensure_owner_tenant(db, tenant_id, owner_profile)
                 registry = AgentRegistry(db)
                 agent = await registry.register(
@@ -981,6 +992,7 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
                         "adapter": "openclaw_gateway",
                         "registration_mode": "self_register",
                         "agent_summary": agent_summary,
+                        "local_agent_id": req.config_json.get("local_agent_id") or agent_id.split(":")[-1],
                         "owner_profile": owner_profile,
                     },
                     actor_id=str(owner_profile.get("user_id") or owner_profile.get("owner_id") or agent_id),
@@ -999,10 +1011,11 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
         return ApiResponse.ok(
             OpenClawAgentRegistrationResponse(
                 agent_id=agent.agent_id,
+                public_number=getattr(agent, "public_number", None),
                 tenant_id=tenant_id,
                 agent_summary=agent_summary,
                 auth_token=auth_token,
-            invite_url=invite_url,
+                invite_url=invite_url,
                 ws_url=urls["ws_url"],
                 onboarding_url=urls["public_connect_url"],
                 transcript_webhook_url=urls["transcript_webhook_url"],
@@ -1174,24 +1187,37 @@ async def agent_link_send_message(req: AgentLinkSendMessageRequest, request: Req
         context_id = req.context_id
         dispatch_tenant_id = tenant_id
         extra_metadata = {}
+        resolved_target_agent_id = req.target_agent_id
+        friend_service = FriendService(db)
         if not context_id:
-            friend_service = FriendService(db)
             try:
-                dispatch_tenant_id, context_id, extra_metadata = await friend_service.resolve_target_context(
+                resolved = await friend_service.resolve_target_context(
                     tenant_id,
                     source_agent_id,
                     req.target_agent_id,
                 )
+                if len(resolved) == 3:
+                    dispatch_tenant_id, context_id, extra_metadata = resolved
+                    resolved_target_agent_id = req.target_agent_id
+                else:
+                    dispatch_tenant_id, context_id, extra_metadata, resolved_target_agent_id = resolved
             except FriendNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
             except FriendForbiddenError as exc:
                 raise HTTPException(status_code=403, detail=str(exc))
             except FriendConflictError as exc:
                 raise HTTPException(status_code=409, detail=str(exc))
+        else:
+            try:
+                resolved_target_agent_id = await friend_service.resolve_agent_id(req.target_agent_id)
+            except FriendNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            if resolved_target_agent_id == source_agent_id:
+                raise HTTPException(status_code=422, detail="target_agent_id 不能等于当前 agent")
 
         message_req = MessageSendRequest(
             context_id=context_id,
-            target_agent_id=req.target_agent_id,
+            target_agent_id=resolved_target_agent_id,
             parts=req.parts,
             metadata={
                 **req.metadata,
@@ -1272,7 +1298,7 @@ async def accept_agent_invite(token: str, request: Request):
             await db.rollback()
             raise
 
-    return ApiResponse.ok(FriendResponse.model_validate(svc.view_payload(friend, current_tenant_id, current_agent_id)))
+    return ApiResponse.ok(FriendResponse.model_validate(await _maybe_await(svc.view_payload(friend, current_tenant_id, current_agent_id))))
 
 
 @router.post(
@@ -1317,28 +1343,28 @@ async def agent_link_friend_tools(request: Request):
     return PlainTextResponse(_agent_link_friend_tools_markdown(request), media_type="text/markdown; charset=utf-8")
 
 
-@router.get("/agent-link/install/openclaw-dbim-mqtt.sh", response_class=PlainTextResponse, include_in_schema=False)
-async def openclaw_dbim_mqtt_install_script(request: Request):
+@router.get("/agent-link/install/openclaw-aimoo-link.sh", response_class=PlainTextResponse, include_in_schema=False)
+async def openclaw_aimoo_install_script(request: Request):
     return PlainTextResponse(_build_openclaw_install_script(request), media_type="text/x-shellscript; charset=utf-8")
 
 
-@router.get("/agent-link/plugins/dbim-mqtt.tar.gz", include_in_schema=False)
-async def download_dbim_mqtt_plugin():
-    if not DBIM_MQTT_PLUGIN_PATH.exists():
-        raise HTTPException(status_code=404, detail="dbim-mqtt plugin not found")
+@router.get("/agent-link/plugins/aimoo-link.tar.gz", include_in_schema=False)
+async def download_aimoo_plugin():
+    if not AIMOO_LINK_PLUGIN_PATH.exists():
+        raise HTTPException(status_code=404, detail="aimoo-link plugin not found")
     excluded_dirs = {"node_modules", ".git", "__pycache__", "test"}
     excluded_files = {".DS_Store"}
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for path in DBIM_MQTT_PLUGIN_PATH.rglob("*"):
-            relative = path.relative_to(DBIM_MQTT_PLUGIN_PATH)
+        for path in AIMOO_LINK_PLUGIN_PATH.rglob("*"):
+            relative = path.relative_to(AIMOO_LINK_PLUGIN_PATH)
             if any(part in excluded_dirs for part in relative.parts):
                 continue
             if path.name in excluded_files or path.suffix == ".pyc":
                 continue
             tar.add(path, arcname=str(relative), recursive=False)
     buffer.seek(0)
-    headers = {"Content-Disposition": 'attachment; filename="dbim-mqtt.tar.gz"'}
+    headers = {"Content-Disposition": 'attachment; filename="aimoo-link.tar.gz"'}
     return Response(buffer.getvalue(), media_type="application/gzip", headers=headers)
 
 

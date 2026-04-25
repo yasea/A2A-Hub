@@ -27,14 +27,14 @@ function fromChannelsConfig(api) {
     return root;
   }
   const channels = root.channels && typeof root.channels === "object" ? root.channels : {};
-  const dbim = channels.dbim_mqtt && typeof channels.dbim_mqtt === "object" ? channels.dbim_mqtt : {};
-  return dbim;
+  const aimoo = channels.aimoo && typeof channels.aimoo === "object" ? channels.aimoo : {};
+  return aimoo;
 }
 
 function normalizeMetadata(input, agentId, localAgentId = agentId) {
   const metadata = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   return {
-    plugin: "dbim-mqtt",
+    plugin: "aimoo-link",
     mode: "channel",
     localAgentId,
     agentId,
@@ -172,12 +172,21 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
     connectUrlFile: expandHome(
       typeof merged.connectUrlFile === "string" && merged.connectUrlFile.trim()
         ? merged.connectUrlFile.trim()
-        : path.join("~/.openclaw", "channels", "dbim_mqtt", shortId, "connect-url.txt"),
+        : path.join("~/.openclaw", "channels", "aimoo", shortId, "connect-url.txt"),
     ),
     stateFile: expandHome(
       typeof merged.stateFile === "string" && merged.stateFile.trim()
         ? merged.stateFile.trim()
-        : path.join("~/.openclaw", "channels", "dbim_mqtt", shortId, "state.json"),
+        : path.join("~/.openclaw", "channels", "aimoo", shortId, "state.json"),
+    ),
+    runtimeIdentityKey:
+      typeof merged.runtimeIdentityKey === "string" && merged.runtimeIdentityKey.trim()
+        ? merged.runtimeIdentityKey.trim()
+        : "",
+    runtimeIdentityKeyFile: expandHome(
+      typeof merged.runtimeIdentityKeyFile === "string" && merged.runtimeIdentityKeyFile.trim()
+        ? merged.runtimeIdentityKeyFile.trim()
+        : "",
     ),
     presenceIntervalSec:
       Number.isInteger(merged.presenceIntervalSec) && merged.presenceIntervalSec > 0
@@ -204,7 +213,7 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
     metadata:
       merged.metadata && typeof merged.metadata === "object" && !Array.isArray(merged.metadata)
         ? merged.metadata
-        : { plugin: "dbim-mqtt", mode: "channel" },
+        : { plugin: "aimoo-link", mode: "channel" },
     httpTimeoutMs:
       Number.isInteger(merged.httpTimeoutMs) && merged.httpTimeoutMs > 0
         ? merged.httpTimeoutMs

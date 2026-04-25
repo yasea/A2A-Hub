@@ -111,6 +111,10 @@ echo "同步内容: ${SYNC_ITEMS[*]}"
 
 sshpass -e ssh "${TARGET_HOST}" "mkdir -p '${TARGET_PATH}'"
 
+if [ -z "$ONLY_PATH" ] || [ "$ONLY_PATH" = "deploy" ] || [[ "$ONLY_PATH" == deploy/* ]] || [ "$ONLY_PATH" = "docker-compose.yml" ]; then
+  sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' 2>/dev/null && docker compose stop mosquitto >/dev/null 2>&1 || true"
+fi
+
 if [ -n "$ONLY_PATH" ]; then
   sshpass -e ssh "${TARGET_HOST}" "mkdir -p '${TARGET_PATH}/$(dirname "$ONLY_PATH")'"
   sshpass -e ssh "${TARGET_HOST}" "rm -rf '${TARGET_PATH}/${ONLY_PATH}'"
@@ -121,7 +125,7 @@ fi
 tar \
   --exclude='backend/.venv' \
   --exclude='backend/__pycache__' \
-  --exclude='backend/dbim-mqtt-plugin/node_modules' \
+  --exclude='backend/openclaw-aimoo-plugin/node_modules' \
   --exclude='backend/app/__pycache__' \
   --exclude='database/__pycache__' \
   --exclude='deploy/__pycache__' \
@@ -130,9 +134,48 @@ tar \
   "${SYNC_ITEMS[@]}" \
 | sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && tar -xzf -"
 
+sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && find deploy -type d -exec chmod 755 {} + 2>/dev/null || true; find deploy -type f -exec chmod 644 {} + 2>/dev/null || true; chmod 755 deploy/mosquitto/run-with-reload.sh 2>/dev/null || true"
+
 echo "上传完成，开始重启远端 Docker 服务..."
 
 sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && docker compose up -d --build"
+
+echo "等待 API 服务就绪..."
+for i in $(seq 1 35); do
+  if sshpass -e ssh "${TARGET_HOST}" "curl -sf http://localhost:${API_HOST_PORT:-1880}/health >/dev/null 2>&1"; then
+    echo "API 服务已就绪。"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "警告：API 服务 30 秒内未就绪，继续执行数据库迁移..." >&2
+  fi
+  sleep 1
+done
+
+echo "同步数据库结构..."
+# db-init (全新部署) 已走 alembic upgrade head；此处处理已有数据库的增量升级。
+# 若数据库由旧版 create_all 建表且 alembic_version 为空，先 stamp 标记再升级。
+sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && docker compose exec -T api python -c '
+import asyncio, os, sys; sys.path.insert(0, \".\")
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+async def main():
+    url = os.environ[\"DATABASE_URL\"]
+    eng = create_async_engine(url)
+    async with eng.begin() as c:
+        r = await c.execute(text(\"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=\\\"alembic_version\\\")\"))
+        has_table = r.scalar()
+        if has_table:
+            r2 = await c.execute(text(\"SELECT COUNT(*) FROM alembic_version\"))
+            if r2.scalar() > 0:
+                print(\"tracked\"); return
+        print(\"stamp_needed\")
+    await eng.dispose()
+asyncio.run(main())
+'" 2>/dev/null | grep -q "stamp_needed" && \
+sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && docker compose exec -T api alembic stamp head" || true
+
+sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && docker compose exec api alembic upgrade head"
 
 echo "远端服务状态："
 sshpass -e ssh "${TARGET_HOST}" "cd '${TARGET_PATH}' && docker compose ps"

@@ -412,7 +412,8 @@ async def custom_swagger_docs():
       for (const agent of agents) {
         const option = document.createElement("option");
         option.value = JSON.stringify({ tenant_id: agent.tenant_id, agent_id: agent.agent_id });
-        option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.agent_id} | ${agent.tenant_id}`;
+        option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.public_number || "无号码"}`;
+        option.title = agent.agent_id;
         select.appendChild(option);
       } 
       log(`已加载 ${agents.length} 个 agent，选择后可直接发送测试消息。`);
@@ -438,7 +439,9 @@ async def custom_swagger_docs():
       for (const it of items) {
         const opt = document.createElement('option');
         opt.value = JSON.stringify({ id: it.id, target_agent_id: it.target_agent_id, tenant_id: it.tenant_id });
-        opt.textContent = `${it.status} | ${it.requester_agent_id} → ${it.target_agent_id} | ${it.tenant_id}`;
+        const peerPn = it.peer_public_number || "无号码";
+        opt.textContent = `${it.status} | ${peerPn}`;
+        opt.title = `${it.requester_agent_id} ↔ ${it.target_agent_id}`;
         friendsSelect.appendChild(opt);
       }
       if (!items.length) friendsSelect.innerHTML = '<option value="">无好友记录</option>';
@@ -736,8 +739,8 @@ def custom_openapi():
         "/v1/agent-link/manifest",
         "/v1/agent-link/self-register",
         "/agent-link/connect",
-        "/agent-link/install/openclaw-dbim-mqtt.sh",
-        "/agent-link/plugins/dbim-mqtt.tar.gz",
+        "/agent-link/install/openclaw-aimoo-link.sh",
+        "/agent-link/plugins/openclaw-aimoo-link.tar.gz",
         "/openclaw/agents/connect.md",
         "/v1/rocketchat/webhook",
     }

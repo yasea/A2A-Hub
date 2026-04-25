@@ -25,20 +25,20 @@ function collectCliTargets(api) {
 
 function selectCliTarget(targets, agentOption) {
   if (!targets.length) {
-    throw new Error("dbim-mqtt CLI unavailable: no enabled dbim_mqtt instance found");
+    throw new Error("aimoo CLI unavailable: no enabled aimoo instance found");
   }
   const requested = normalizeAgentId(agentOption);
   if (!requested) {
     if (targets.length === 1) return targets[0];
     const available = targets.map((item) => item.localAgentId || item.platformAgentId).filter(Boolean).join(", ");
-    throw new Error(`multiple dbim_mqtt agents configured; pass --agent <local-agent-id>. available: ${available}`);
+    throw new Error(`multiple aimoo agents configured; pass --agent <local-agent-id>. available: ${available}`);
   }
   const target = targets.find(
     (item) => requested === normalizeAgentId(item.localAgentId) || requested === normalizeAgentId(item.platformAgentId),
   );
   if (!target) {
     const available = targets.map((item) => item.localAgentId || item.platformAgentId).filter(Boolean).join(", ");
-    throw new Error(`unknown dbim_mqtt agent "${requested}". available: ${available}`);
+    throw new Error(`unknown aimoo agent "${requested}". available: ${available}`);
   }
   return target;
 }
@@ -46,10 +46,10 @@ function selectCliTarget(targets, agentOption) {
 function ensureHelperExists(target) {
   const userProfileFile = typeof target?.config?.userProfileFile === "string" ? target.config.userProfileFile : "";
   if (!userProfileFile) {
-    throw new Error("dbim-mqtt userProfileFile is unavailable");
+    throw new Error("aimoo Link userProfileFile is unavailable");
   }
   if (!fs.existsSync(userProfileFile)) {
-    throw new Error(`dbim-mqtt USER.md not found: ${userProfileFile}`);
+    throw new Error(`aimoo Link USER.md not found: ${userProfileFile}`);
   }
 }
 
@@ -69,11 +69,14 @@ function runCommand(target, argv) {
     stdio: "inherit",
     env: {
       ...buildRunnerEnv(target),
-      DBIM_MQTT_CLI_CONFIG_JSON: JSON.stringify({
+      AIMOO_LINK_CLI_CONFIG_JSON: JSON.stringify({
         connectUrl: target.config.connectUrl,
         agentId: target.platformAgentId || target.config.agentId,
         localAgentId: target.localAgentId,
         userProfileFile: target.config.userProfileFile,
+        stateFile: target.config.stateFile,
+        runtimeIdentityKey: target.config.runtimeIdentityKey,
+        runtimeIdentityKeyFile: target.config.runtimeIdentityKeyFile,
         httpTimeoutMs: target.config.httpTimeoutMs || 15000,
       }),
     },
@@ -99,11 +102,11 @@ function executeCli(api, command, argv) {
   runCommand(target, argv);
 }
 
-function registerDbimMqttCli(program, api) {
+function registerAimooCli(program, api) {
   const root = program
-    .command("dbim-mqtt")
-    .description("A2A Hub Agent Link CLI for the dbim-mqtt plugin")
-    .option("--agent <localAgentId>", "Local OpenClaw agent id. Required when multiple dbim_mqtt instances are configured.")
+    .command("aimoo")
+    .description("A2A Hub Agent Link CLI for the aimoo-link plugin")
+    .option("--agent <localAgentId>", "Local OpenClaw agent id. Required when multiple aimoo instances are configured.")
     .showHelpAfterError();
 
   const simpleCommand = (name, description) => {
@@ -173,14 +176,14 @@ function registerDbimMqttCli(program, api) {
     });
 }
 
-function createDbimMqttCli(api) {
-  return ({ program }) => registerDbimMqttCli(program, api);
+function createAimooCli(api) {
+  return ({ program }) => registerAimooCli(program, api);
 }
 
 module.exports = {
   collectCliTargets,
-  createDbimMqttCli,
+  createAimooCli,
   normalizeAgentId,
-  registerDbimMqttCli,
+  registerAimooCli,
   selectCliTarget,
 };

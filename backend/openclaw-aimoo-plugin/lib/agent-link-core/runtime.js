@@ -64,7 +64,7 @@ class AgentLinkCoreRuntime {
   async start() {
     if (!this.config.enabled || this.started) return;
     this.started = true;
-    this.logger.info(`dbim-mqtt: runtime start localAgentId=${this.config.localAgentId || this.config.agentId}`);
+    this.logger.info(`aimoo: runtime start localAgentId=${this.config.localAgentId || this.config.agentId}`);
     ensureDir(this.config.stateFile);
     ensureDir(this.config.connectUrlFile);
     if (!fs.existsSync(this.config.connectUrlFile)) fs.writeFileSync(this.config.connectUrlFile, "", "utf8");
@@ -132,7 +132,7 @@ class AgentLinkCoreRuntime {
       this.currentConnectUrl = nextUrl;
       this.currentBootstrap = await fetchBootstrap(nextUrl, this.config);
       this.logger.info(
-        `dbim-mqtt: bootstrap resolved localAgentId=${this.config.localAgentId || this.config.agentId} agentId=${this.currentBootstrap.agentId} tenantId=${this.currentBootstrap.tenantId}`,
+        `aimoo: bootstrap resolved localAgentId=${this.config.localAgentId || this.config.agentId} agentId=${this.currentBootstrap.agentId} tenantId=${this.currentBootstrap.tenantId}`,
       );
       this.messageApi = new AgentMessageApi(this.currentBootstrap, this.config);
       this.mqttClient = new MqttCommandClient(
@@ -171,7 +171,7 @@ class AgentLinkCoreRuntime {
       });
       writeAgentLinkLocalControl(this.config, this.currentBootstrap);
       this.logger.info(
-        `dbim-mqtt: instance online localAgentId=${this.config.localAgentId || this.config.agentId} topic=${this.currentBootstrap.mqttCommandTopic}`,
+        `aimoo: instance online localAgentId=${this.config.localAgentId || this.config.agentId} topic=${this.currentBootstrap.mqttCommandTopic}`,
       );
       this.retryAttempt = 0;
       this.clearRetry();
@@ -182,7 +182,7 @@ class AgentLinkCoreRuntime {
         updatedAt: nowIso(),
         localAgentId: this.resolveLocalAgentId(),
       });
-      this.logger.error(`dbim-mqtt: reload failed: ${String(error)}`);
+      this.logger.error(`aimoo: reload failed: ${String(error)}`);
       this.scheduleRetry();
     } finally {
       this.connecting = false;
@@ -191,7 +191,7 @@ class AgentLinkCoreRuntime {
 
   async refreshAfterPresenceAuthFailure(error) {
     if (!this.started || this.connecting) return;
-    this.logger.warn?.(`dbim-mqtt: refreshing bootstrap after presence auth failure: ${String(error)}`);
+    this.logger.warn?.(`aimoo: refreshing bootstrap after presence auth failure: ${String(error)}`);
     this.presenceClient?.stop();
     this.presenceClient = null;
     this.mqttClient?.stop();

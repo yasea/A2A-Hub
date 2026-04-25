@@ -4,15 +4,17 @@
 
 ## 当前方案
 
-- OpenClaw runtime agent 通过 `dbim-mqtt` 插件接入平台。
+- OpenClaw runtime agent 通过 `aimoo-link` 插件接入平台。
 - 普通接入默认私有，不自动公开给其他租户。
 - 对外公开能力通过 `service` 提供，而不是直接暴露 runtime agent。
 - owner tenant 由公开自注册时提交的 `USER.md` owner profile 自动派生。
+- 本机短 agent id 可以继续叫 `main`；平台 agent id 会自动加入稳定 `runtime_identity_key`，避免不同用户或不同机器的 `main` 冲突。
 - MQTT 认证是租户级的：`username=tenant_id`，`password=HMAC(MQTT_TENANT_PASSWORD_SECRET, tenant_id)`。
 
 ## 主要对象
 
-- `runtime agent`：真实在线执行消息的 agent，例如 `openclaw:mia`
+- `runtime agent`：真实在线执行消息的 agent，本机短名可为 `mia` / `main`
+- `platform agent id`：Hub 中的唯一 agent id，例如 `openclaw:<runtime_identity_key>:main`
 - `owner tenant`：由 owner profile 派生的内部租户
 - `service`：provider 把 runtime agent 包装后的公开能力
 - `service thread`：consumer 围绕 service 发起的多轮对话
@@ -59,19 +61,21 @@ http://<host>:1880/agent-link/prompt
 当前标准流程：
 
 1. agent 读取 `/agent-link/prompt` 或 `/agent-link/connect`
-2. agent 安装或升级 `dbim-mqtt`
+2. agent 安装或升级 `aimoo-link`
 3. 安装脚本修改 `~/.openclaw/openclaw.json`
 4. 插件读取 `USER.md`，必要时结合 `SOUL.md` / `agents.list` 自动识别本机短 agent id
 5. 插件调用 `/v1/agent-link/self-register` 自注册
 6. 平台创建或复用 owner tenant，返回 MQTT topic / credential / agent token
+   - 内部 `agent_id` 用于路由和 MQTT topic
+   - 公开 `public_number` 用于好友添加、展示和主人指令
 7. 插件订阅命令 topic、上报 presence、处理 `task.dispatch`
-8. 插件在线后暴露 `openclaw dbim-mqtt --agent <id>`，并写入 `.agent-link/friend-tools.md`
+8. 插件在线后暴露 `openclaw aimoo --agent <id>`，并写入 `.agent-link/friend-tools.md`
 
 推荐安装命令：
 
 ```bash
 CONNECT_URL="http://<host>:1880/agent-link/connect" \
-curl -fsSL "http://<host>:1880/agent-link/install/openclaw-dbim-mqtt.sh" | bash
+curl -fsSL "http://<host>:1880/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
 说明：
@@ -80,13 +84,14 @@ curl -fsSL "http://<host>:1880/agent-link/install/openclaw-dbim-mqtt.sh" | bash
 - `AGENT_ID` 可传短 id，也可传 `openclaw:<id>`
 - 正式安装产物只写 `connectUrl`
 - `connectUrlFile` 仅用于本地开发热切换
+- `runtime_identity_key` 由插件生成并保存在 `~/.openclaw/channels/aimoo/<agent>/runtime-identity-key`
 
 ## 本地结果检查
 
 推荐检查顺序：
 
 1. `~/.openclaw/workspace/<agent>/.agent-link/install-result.json`
-2. `~/.openclaw/channels/dbim_mqtt/<agent>/state.json`
+2. `~/.openclaw/channels/aimoo/<agent>/state.json`
 3. `journalctl --user -u openclaw-gateway.service`
 
 成功判定：
@@ -97,10 +102,18 @@ curl -fsSL "http://<host>:1880/agent-link/install/openclaw-dbim-mqtt.sh" | bash
 补充：
 
 - `status=running` 且 `stage=install_waiting` 表示仍在初始化，不要立即判失败
-- `openclaw dbim-mqtt --agent <agent> --help` 可看到正式 CLI
-- `status` / `urls` 是本地只读
+- `openclaw aimoo --agent <agent> status` 会展示 runtime state、最近错误、诊断和建议动作
+- `openclaw aimoo --agent <agent> --help` 可看到正式 CLI
+- `status` / `urls` 是本地只读，不会修改 Hub 或本机配置
 - `doctor` 只访问 Hub 做轻量诊断
 - 默认不修改 `TOOLS.md`；只有 `writeWorkspaceTools=true` 时才注入长期提示
+
+常见判断：
+
+- `status=online`：MQTT 已连接并订阅命令 topic
+- `status=reconnecting` 且日志反复出现 `mqtt connected`：优先检查是否有两台 OpenClaw 使用同一份旧平台 `agentId` / MQTT clientId 同时在线
+- `last_error.category=mqtt_auth`：优先检查 Hub 是否已同步 Mosquitto `passwordfile` / `aclfile` 并 reload broker
+- `last_error.category=agent_token`：执行 `openclaw aimoo --agent <agent> doctor` 后重启 OpenClaw Gateway
 
 ## agent summary
 

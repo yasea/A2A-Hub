@@ -3,7 +3,7 @@ AgentRegistry：Agent 注册、查询、能力声明、健康状态维护
 """
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -15,6 +15,8 @@ class AgentNotFoundError(ValueError):
 
 
 class AgentRegistry:
+    PUBLIC_NUMBER_START = 10000001
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.audit = AuditService(db)
@@ -33,11 +35,14 @@ class AgentRegistry:
         """注册或更新 Agent"""
         existing = await self.get(agent_id, tenant_id)
         if existing:
+            if getattr(existing, "public_number", None) is None:
+                existing.public_number = await self._next_public_number()
             # 更新已有 Agent
             await self.db.execute(
                 update(Agent)
                 .where(Agent.agent_id == agent_id, Agent.tenant_id == tenant_id)
                 .values(
+                    public_number=existing.public_number,
                     display_name=display_name,
                     status="ACTIVE",
                     capabilities=capabilities or {},
@@ -55,6 +60,7 @@ class AgentRegistry:
 
         agent = Agent(
             agent_id=agent_id,
+            public_number=await self._next_public_number(),
             tenant_id=tenant_id,
             agent_type=agent_type,
             display_name=display_name,
@@ -67,12 +73,36 @@ class AgentRegistry:
         await self.audit.log(tenant_id, "agent.register", "agent", agent_id, actor_id=actor_id)
         return agent
 
+    async def _next_public_number(self) -> int:
+        """Allocate the next public friend number.
+
+        The number is user-facing only. Internal routing continues to use
+        agent_id, so this can stay compact and globally unique.
+        """
+
+        result = await self.db.execute(select(func.max(Agent.public_number)))
+        current = result.scalar_one_or_none()
+        if not current:
+            return self.PUBLIC_NUMBER_START
+        return max(int(current) + 1, self.PUBLIC_NUMBER_START)
+
     async def get(self, agent_id: str, tenant_id: str) -> Agent | None:
         """查询单个 Agent（租户隔离）"""
         result = await self.db.execute(
             select(Agent).where(Agent.agent_id == agent_id, Agent.tenant_id == tenant_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_by_ref(self, agent_ref: str, tenant_id: str) -> Agent | None:
+        """Query by internal agent_id or public friend number within a tenant."""
+
+        text = str(agent_ref or "").strip()
+        if text.isdigit() and len(text) >= 8:
+            result = await self.db.execute(
+                select(Agent).where(Agent.public_number == int(text), Agent.tenant_id == tenant_id)
+            )
+            return result.scalar_one_or_none()
+        return await self.get(text, tenant_id)
 
     async def list_active(self, tenant_id: str) -> list[Agent]:
         """列出租户下所有 ACTIVE Agent"""

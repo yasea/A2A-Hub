@@ -113,6 +113,7 @@ class OpenClawAgentRegisterRequest(BaseModel):
 
 class OpenClawAgentRegistrationResponse(BaseModel):
     agent_id: str
+    public_number: int | None = None
     tenant_id: str
     agent_summary: str | None = None
     auth_token: str
@@ -197,7 +198,7 @@ class AgentLinkManifestResponse(BaseModel):
     friend_tools_url: str | None = None
     transport: str = "mqtt"
     mqtt_public_broker_url: str | None = None
-    required_plugin: str = "dbim-mqtt"
+    required_plugin: str = "aimoo-link"
     owner_profile_source: str = "OpenClaw USER.md"
     notes: list[str] = Field(default_factory=list)
 

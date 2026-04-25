@@ -1,20 +1,20 @@
 "use strict";
 
 const { resolvePluginInstances } = require("./lib/config");
-const { DbimMqttChannel } = require("./lib/channel");
-const { createDbimMqttCli } = require("./lib/cli");
+const { AimooChannel } = require("./lib/channel");
+const { createAimooCli } = require("./lib/cli");
 
-const PLUGIN_ID = "dbim-mqtt";
+const PLUGIN_ID = "aimoo-link";
 
 module.exports = {
   id: PLUGIN_ID,
-  name: "DBIM MQTT",
+  name: "Aimoo Link",
   version: "0.4.0",
-  description: "OpenClaw DBIM MQTT channel plugin with embedded Agent Link Core.",
+  description: "OpenClaw Aimoo Link channel plugin with embedded Agent Link Core.",
   register(api) {
     const configs = resolvePluginInstances(api).filter((item) => item.enabled !== false);
-    const channels = configs.map((config) => new DbimMqttChannel(api, config));
-    api.registerCli(createDbimMqttCli(api), { commands: ["dbim-mqtt"] });
+    const channels = configs.map((config) => new AimooChannel(api, config));
+    api.registerCli(createAimooCli(api), { commands: ["aimoo"] });
     api.registerService({
       id: PLUGIN_ID,
       start: async () => {

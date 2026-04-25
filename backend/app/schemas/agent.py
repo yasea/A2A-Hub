@@ -13,6 +13,7 @@ class AgentCreate(BaseModel):
 
 class AgentResponse(BaseModel):
     agent_id: str
+    public_number: int | None = None
     tenant_id: str
     agent_type: str
     display_name: str

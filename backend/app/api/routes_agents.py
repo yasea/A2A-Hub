@@ -61,7 +61,7 @@ async def list_agents(db: DbDep, tenant: TenantDep):
 async def get_agent(agent_id: str, db: DbDep, tenant: TenantDep):
     """查询单个 Agent 详情。"""
     svc = AgentRegistry(db)
-    agent = await svc.get(agent_id, tenant["tenant_id"])
+    agent = await svc.get_by_ref(agent_id, tenant["tenant_id"])
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent 不存在")
     return ApiResponse.ok(AgentResponse.model_validate(agent))
@@ -80,10 +80,13 @@ async def update_agent_status(agent_id: str, req: AgentStatusUpdate, db: DbDep, 
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"status 必须是 {valid}")
     svc = AgentRegistry(db)
     try:
-        await svc.set_status(agent_id, tenant["tenant_id"], req.status, actor_id=tenant.get("sub"))
+        agent = await svc.get_by_ref(agent_id, tenant["tenant_id"])
+        if not agent:
+            raise AgentNotFoundError(f"Agent {agent_id} 不存在")
+        await svc.set_status(agent.agent_id, tenant["tenant_id"], req.status, actor_id=tenant.get("sub"))
     except AgentNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    return ApiResponse.ok({"agent_id": agent_id, "status": req.status})
+    return ApiResponse.ok({"agent_id": agent.agent_id, "public_number": agent.public_number, "status": req.status})
 
 
 @router.get(
@@ -95,5 +98,6 @@ async def update_agent_status(agent_id: str, req: AgentStatusUpdate, db: DbDep, 
 async def agent_health(agent_id: str, db: DbDep, tenant: TenantDep):
     """检查 Agent 是否存在且处于 `ACTIVE` 状态。"""
     svc = AgentRegistry(db)
-    result = await svc.healthcheck(agent_id, tenant["tenant_id"])
+    agent = await svc.get_by_ref(agent_id, tenant["tenant_id"])
+    result = await svc.healthcheck(agent.agent_id, tenant["tenant_id"]) if agent else {"agent_id": agent_id, "healthy": False, "reason": "not_found"}
     return ApiResponse.ok(result)

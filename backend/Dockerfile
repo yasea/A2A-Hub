@@ -11,7 +11,7 @@ COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
 COPY scripts/ ./scripts/
-COPY dbim-mqtt-plugin/ ./dbim-mqtt-plugin/
+COPY openclaw-aimoo-plugin/ ./openclaw-aimoo-plugin/
 
 EXPOSE 8000
 

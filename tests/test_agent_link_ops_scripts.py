@@ -29,8 +29,8 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            (home / "plugins" / "dbim-mqtt").mkdir(parents=True)
-            (home / "channels" / "dbim_mqtt" / "ava").mkdir(parents=True)
+            (home / "plugins" / "aimoo-link").mkdir(parents=True)
+            (home / "channels" / "aimoo" / "ava").mkdir(parents=True)
             (home / "workspace" / "ava" / ".agent-link").mkdir(parents=True)
             (home / "workspace-main" / ".agent-link").mkdir(parents=True)
             (home / "agents" / "ava" / "sessions").mkdir(parents=True)
@@ -38,15 +38,15 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
 
             config = {
                 "plugins": {
-                    "allow": ["dbim-mqtt", "other-plugin"],
-                    "load": {"paths": [str(home / "plugins" / "dbim-mqtt"), "/opt/other"]},
+                    "allow": ["aimoo-link", "other-plugin"],
+                    "load": {"paths": [str(home / "plugins" / "aimoo-link"), "/opt/other"]},
                     "entries": {
-                        "dbim-mqtt": {"enabled": True},
+                        "aimoo-link": {"enabled": True},
                         "other-plugin": {"enabled": True},
                     },
                 },
                 "channels": {
-                    "dbim_mqtt": {
+                    "aimoo": {
                         "enabled": True,
                         "instances": [
                             {"localAgentId": "ava", "agentId": "openclaw:ava"},
@@ -57,14 +57,14 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
                 },
             }
             (home / "openclaw.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            (home / "channels" / "dbim_mqtt" / "ava" / "state.json").write_text("{}", encoding="utf-8")
+            (home / "channels" / "aimoo" / "ava" / "state.json").write_text("{}", encoding="utf-8")
             (home / "workspace" / "ava" / ".agent-link" / "install-result.json").write_text("{}", encoding="utf-8")
             (home / "workspace" / "ava" / ".agent-link" / "install-check.log").write_text("log", encoding="utf-8")
             (home / "workspace-main" / ".agent-link" / "install-check.log").write_text("log", encoding="utf-8")
             (home / "agents" / "ava" / "sessions" / "sessions.json").write_text(
                 json.dumps(
                     {
-                        "agent:ava:main": {"sessionId": "dbim:bad"},
+                        "agent:ava:main": {"sessionId": "aimoo:bad"},
                         "agent:ava:keep": {"sessionId": "normal"},
                     },
                     ensure_ascii=False,
@@ -76,7 +76,7 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
             (home / "agents" / "main" / "sessions" / "sessions.json").write_text(
                 json.dumps(
                     {
-                        "agent:main:main": {"sessionId": "dbim:another"},
+                        "agent:main:main": {"sessionId": "aimoo:another"},
                         "agent:main:keep": {"sessionId": "ok"},
                     },
                     ensure_ascii=False,
@@ -94,10 +94,10 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
             updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
             self.assertEqual(updated["plugins"]["allow"], ["other-plugin"])
             self.assertEqual(updated["plugins"]["load"]["paths"], ["/opt/other"])
-            self.assertNotIn("dbim-mqtt", updated["plugins"]["entries"])
-            self.assertNotIn("dbim_mqtt", updated["channels"])
+            self.assertNotIn("aimoo-link", updated["plugins"]["entries"])
+            self.assertNotIn("aimoo", updated["channels"])
             self.assertEqual(updated["channels"]["telegram"], {"enabled": True})
-            self.assertFalse((home / "channels" / "dbim_mqtt").exists())
+            self.assertFalse((home / "channels" / "aimoo").exists())
             self.assertFalse((home / "workspace" / "ava" / ".agent-link").exists())
             self.assertFalse((home / "workspace-main" / ".agent-link").exists())
 
@@ -108,23 +108,23 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
             self.assertNotIn("agent:main:main", main_sessions)
             self.assertEqual(main_sessions["agent:main:keep"]["sessionId"], "ok")
 
-    def test_reset_client_agent_mode_removes_empty_dbim_channel_with_plugin_config(self):
-        """按 agent 清理时不能留下未加载插件的空 dbim_mqtt channel。"""
+    def test_reset_client_agent_mode_removes_empty_aimoo_channel_with_plugin_config(self):
+        """按 agent 清理时不能留下未加载插件的空 aimoo channel。"""
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            (home / "plugins" / "dbim-mqtt").mkdir(parents=True)
+            (home / "plugins" / "aimoo-link").mkdir(parents=True)
             config = {
                 "plugins": {
-                    "allow": ["dbim-mqtt", "other-plugin"],
-                    "load": {"paths": [str(home / "plugins" / "dbim-mqtt"), "/opt/other"]},
+                    "allow": ["aimoo-link", "other-plugin"],
+                    "load": {"paths": [str(home / "plugins" / "aimoo-link"), "/opt/other"]},
                     "entries": {
-                        "dbim-mqtt": {"enabled": True},
+                        "aimoo-link": {"enabled": True},
                         "other-plugin": {"enabled": True},
                     },
                 },
                 "channels": {
-                    "dbim_mqtt": {
+                    "aimoo": {
                         "enabled": True,
                         "replyMode": "openclaw-agent",
                         "recordOpenClawSession": True,
@@ -142,28 +142,28 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
             updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
             self.assertEqual(updated["plugins"]["allow"], ["other-plugin"])
             self.assertEqual(updated["plugins"]["load"]["paths"], ["/opt/other"])
-            self.assertNotIn("dbim-mqtt", updated["plugins"]["entries"])
-            self.assertNotIn("dbim_mqtt", updated["channels"])
+            self.assertNotIn("aimoo-link", updated["plugins"]["entries"])
+            self.assertNotIn("aimoo", updated["channels"])
             self.assertEqual(updated["channels"]["telegram"], {"enabled": True})
 
     def test_reset_client_agent_mode_keeps_plugin_config_when_other_instances_remain(self):
-        """只清理一个 agent 时，仍有其他 dbim_mqtt 实例就必须保留插件加载配置。"""
+        """只清理一个 agent 时，仍有其他 aimoo 实例就必须保留插件加载配置。"""
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            plugin_dir = home / "plugins" / "dbim-mqtt"
+            plugin_dir = home / "plugins" / "aimoo-link"
             plugin_dir.mkdir(parents=True)
             config = {
                 "plugins": {
-                    "allow": ["dbim-mqtt", "other-plugin"],
+                    "allow": ["aimoo-link", "other-plugin"],
                     "load": {"paths": [str(plugin_dir), "/opt/other"]},
                     "entries": {
-                        "dbim-mqtt": {"enabled": True},
+                        "aimoo-link": {"enabled": True},
                         "other-plugin": {"enabled": True},
                     },
                 },
                 "channels": {
-                    "dbim_mqtt": {
+                    "aimoo": {
                         "enabled": True,
                         "instances": [
                             {"localAgentId": "ava", "agentId": "openclaw:ava"},
@@ -181,27 +181,27 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
             )
 
             updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
-            self.assertIn("dbim-mqtt", updated["plugins"]["allow"])
+            self.assertIn("aimoo-link", updated["plugins"]["allow"])
             self.assertIn(str(plugin_dir), updated["plugins"]["load"]["paths"])
-            self.assertEqual(updated["plugins"]["entries"]["dbim-mqtt"], {"enabled": True})
-            self.assertEqual(updated["channels"]["dbim_mqtt"]["instances"], [{"localAgentId": "ava", "agentId": "openclaw:ava"}])
+            self.assertEqual(updated["plugins"]["entries"]["aimoo-link"], {"enabled": True})
+            self.assertEqual(updated["channels"]["aimoo"]["instances"], [{"localAgentId": "ava", "agentId": "openclaw:ava"}])
 
     def test_reset_client_remove_plugin_really_removes_plugin_dir(self):
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            plugin_dir = home / "plugins" / "dbim-mqtt"
-            plugin_backup = home / "plugins" / "dbim-mqtt.bak.1"
+            plugin_dir = home / "plugins" / "aimoo-link"
+            plugin_backup = home / "plugins" / "aimoo-link.bak.1"
             plugin_dir.mkdir(parents=True)
             plugin_backup.mkdir(parents=True)
             config = {
                 "plugins": {
-                    "allow": ["dbim-mqtt"],
+                    "allow": ["aimoo-link"],
                     "load": {"paths": [str(plugin_dir)]},
-                    "entries": {"dbim-mqtt": {"enabled": True}},
+                    "entries": {"aimoo-link": {"enabled": True}},
                 },
                 "channels": {
-                    "dbim_mqtt": {
+                    "aimoo": {
                         "enabled": True,
                         "instances": [{"localAgentId": "main", "agentId": "openclaw:main"}],
                     }

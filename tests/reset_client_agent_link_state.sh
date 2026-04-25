@@ -5,7 +5,7 @@ MODE="agent"
 TARGET_AGENT="main"
 REMOVE_PLUGIN="false"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-PLUGIN_DIR="$OPENCLAW_HOME/plugins/dbim-mqtt"
+PLUGIN_DIR="$OPENCLAW_HOME/plugins/aimoo-link"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -39,19 +39,19 @@ from pathlib import Path
 config_file = Path(sys.argv[1]).expanduser()
 mode = sys.argv[2]
 target = sys.argv[3]
-plugin_dir = str((config_file.parent / "plugins" / "dbim-mqtt").expanduser())
+plugin_dir = str((config_file.parent / "plugins" / "aimoo-link").expanduser())
 
 if not config_file.exists():
     raise SystemExit(0)
 
 data = json.loads(config_file.read_text(encoding="utf-8"))
-remove_dbim_plugin_config = mode == "all"
+remove_aimoo_plugin_config = mode == "all"
 
 channels = data.get("channels")
 if isinstance(channels, dict):
-    dbim = channels.get("dbim_mqtt")
-    if isinstance(dbim, dict):
-        instances = dbim.get("instances")
+    aimoo = channels.get("aimoo")
+    if isinstance(aimoo, dict):
+        instances = aimoo.get("instances")
         if isinstance(instances, list):
             kept = []
             for item in instances:
@@ -60,30 +60,30 @@ if isinstance(channels, dict):
                 if not remove:
                     kept.append(item)
             if kept:
-                dbim["instances"] = kept
+                aimoo["instances"] = kept
             else:
-                dbim.pop("instances", None)
+                aimoo.pop("instances", None)
 
         if mode == "all":
-            channels.pop("dbim_mqtt", None)
+            channels.pop("aimoo", None)
         else:
-            top_agent = str(dbim.get("localAgentId") or dbim.get("agentId") or "").split(":")[-1]
+            top_agent = str(aimoo.get("localAgentId") or aimoo.get("agentId") or "").split(":")[-1]
             if top_agent == target:
-                channels.pop("dbim_mqtt", None)
-            elif not dbim.get("instances") and not top_agent:
+                channels.pop("aimoo", None)
+            elif not aimoo.get("instances") and not top_agent:
                 # An empty channel without plugin load config makes OpenClaw abort
-                # with: channels.dbim_mqtt: unknown channel id: dbim_mqtt.
-                channels.pop("dbim_mqtt", None)
+                # with: channels.aimoo: unknown channel id: aimoo.
+                channels.pop("aimoo", None)
 
-        if not channels.get("dbim_mqtt"):
-            channels.pop("dbim_mqtt", None)
-            remove_dbim_plugin_config = True
+        if not channels.get("aimoo"):
+            channels.pop("aimoo", None)
+            remove_aimoo_plugin_config = True
 
 plugins = data.get("plugins")
-if remove_dbim_plugin_config and isinstance(plugins, dict):
+if remove_aimoo_plugin_config and isinstance(plugins, dict):
     allow = plugins.get("allow")
     if isinstance(allow, list):
-        allow = [item for item in allow if item != "dbim-mqtt"]
+        allow = [item for item in allow if item != "aimoo-link"]
         if allow:
             plugins["allow"] = allow
         else:
@@ -110,7 +110,7 @@ if remove_dbim_plugin_config and isinstance(plugins, dict):
 
     entries = plugins.get("entries")
     if isinstance(entries, dict):
-        entries.pop("dbim-mqtt", None)
+        entries.pop("aimoo-link", None)
         if not entries:
             plugins.pop("entries", None)
 
@@ -120,7 +120,7 @@ if remove_dbim_plugin_config and isinstance(plugins, dict):
 config_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
-strip_dbim_sessions() {
+strip_aimoo_sessions() {
   local session_file="$1"
   python3 - "$session_file" <<'PY'
 import json
@@ -135,7 +135,7 @@ except Exception:
 
 changed = False
 for key, value in list(data.items()):
-    if isinstance(value, dict) and str(value.get("sessionId") or "").startswith("dbim:"):
+    if isinstance(value, dict) and str(value.get("sessionId") or "").startswith("aimoo:"):
         data.pop(key, None)
         changed = True
 
@@ -146,18 +146,18 @@ PY
 
 remove_agent_paths() {
   local short_id="$1"
-  rm -rf "$OPENCLAW_HOME/channels/dbim_mqtt/$short_id"
+  rm -rf "$OPENCLAW_HOME/channels/aimoo/$short_id"
   rm -rf "$OPENCLAW_HOME/workspace/$short_id/.agent-link"
   rm -rf "$OPENCLAW_HOME/workspace-$short_id/.agent-link"
   rm -f "$OPENCLAW_HOME/workspace/$short_id/.agent-link/install-check.log"
-  rm -f "$OPENCLAW_HOME/workspace-$short_id/.agent-link/install-check.log"
+  rm -f "$OPENCLAW_HOME/workspace/$short_id/.agent-link/install-check.log"
   if [ -f "$OPENCLAW_HOME/agents/$short_id/sessions/sessions.json" ]; then
-    strip_dbim_sessions "$OPENCLAW_HOME/agents/$short_id/sessions/sessions.json"
+    strip_aimoo_sessions "$OPENCLAW_HOME/agents/$short_id/sessions/sessions.json"
   fi
 }
 
 if [ "$MODE" = "all" ]; then
-  rm -rf "$OPENCLAW_HOME/channels/dbim_mqtt"
+  rm -rf "$OPENCLAW_HOME/channels/aimoo"
   if [ -d "$OPENCLAW_HOME/workspace" ]; then
     find "$OPENCLAW_HOME/workspace" -maxdepth 2 -type d -name .agent-link -exec rm -rf {} + 2>/dev/null || true
   fi
@@ -168,7 +168,7 @@ if [ "$MODE" = "all" ]; then
   fi
   if [ -d "$OPENCLAW_HOME/agents" ]; then
     find "$OPENCLAW_HOME/agents" -path '*/sessions/sessions.json' -type f -print0 2>/dev/null | while IFS= read -r -d '' file; do
-      strip_dbim_sessions "$file"
+      strip_aimoo_sessions "$file"
     done
   fi
 else

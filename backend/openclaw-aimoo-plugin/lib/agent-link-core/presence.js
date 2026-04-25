@@ -64,11 +64,11 @@ class PresenceClient {
       void this.send().catch((error) => {
         if (isAuthExpiredResponse(error) && this.onAuthExpired && !this.authRefreshRequested) {
           this.authRefreshRequested = true;
-          this.logger.warn?.(`dbim-mqtt: presence token expired; refreshing bootstrap for localAgentId=${this.config.localAgentId || this.config.agentId}`);
+          this.logger.warn?.(`aimoo: presence token expired; refreshing bootstrap for localAgentId=${this.config.localAgentId || this.config.agentId}`);
           void this.onAuthExpired(error);
           return;
         }
-        this.logger.debug?.(`dbim-mqtt: presence heartbeat failed: ${String(error)}`);
+        this.logger.debug?.(`aimoo: presence heartbeat failed: ${String(error)}`);
       });
     }, this.config.presenceIntervalSec * 1000);
   }

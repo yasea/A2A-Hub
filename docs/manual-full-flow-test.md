@@ -58,8 +58,10 @@ API=$API python3 tests/remote_05_public_self_register.py --agent-id main
 需要 `SERVICE_ACCOUNT_ISSUER_SECRET` 的脚本：
 
 ```bash
-SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_03_platform_to_agent.py --target-agent-id openclaw:main
-SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_06_service_conversation.py --handler-agent-id openclaw:main --initiator-agent-id openclaw:ava
+MAIN_AGENT_ID=$(openclaw aimoo --agent main status | jq -r .agent_id)
+AVA_AGENT_ID=$(openclaw aimoo --agent ava status | jq -r .agent_id)
+SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_03_platform_to_agent.py --target-agent-id "$MAIN_AGENT_ID"
+SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_06_service_conversation.py --handler-agent-id "$MAIN_AGENT_ID" --initiator-agent-id "$AVA_AGENT_ID"
 ```
 
 正式集成脚本：
@@ -108,7 +110,7 @@ bash tests/reset_client_agent_link_state.sh --all --remove-plugin
 
 ```bash
 CONNECT_URL="$API/agent-link/connect" \
-curl -fsSL "$API/agent-link/install/openclaw-dbim-mqtt.sh" | bash
+curl -fsSL "$API/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
 如自动识别失败：
@@ -116,22 +118,24 @@ curl -fsSL "$API/agent-link/install/openclaw-dbim-mqtt.sh" | bash
 ```bash
 AGENT_ID=main \
 CONNECT_URL="$API/agent-link/connect" \
-curl -fsSL "$API/agent-link/install/openclaw-dbim-mqtt.sh" | bash
+curl -fsSL "$API/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
 检查：
 
 ```bash
 cat ~/.openclaw/workspace/main/.agent-link/install-result.json
-cat ~/.openclaw/channels/dbim_mqtt/main/state.json
+cat ~/.openclaw/channels/aimoo/main/state.json
+openclaw aimoo --agent main status
 curl -sS "$API/v1/docs-test/agents" | jq
 ```
 
 验收点：
 
 - `install-result.json.status=success`，或 `state.status=online`
-- `openclaw:main` 在 `docs-test/agents` 中为在线
+- `state.agentId` 对应的完整平台 agent id 在 `docs-test/agents` 中为在线
 - 如果服务端已重置，初始 `friends` 应为空
+- 如果 `status` 显示 `reconnecting`，先看 `last_error` / `suggested_actions`
 
 ### 3.4 接入 hk OpenClaw
 
@@ -144,14 +148,15 @@ ssh hk
 ```bash
 AGENT_ID=ava \
 CONNECT_URL="https://ai.hub.aimoo.com/agent-link/connect" \
-curl -fsSL "https://ai.hub.aimoo.com/agent-link/install/openclaw-dbim-mqtt.sh" | bash
+curl -fsSL "https://ai.hub.aimoo.com/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
 检查：
 
 ```bash
 cat /data/openclaw/.openclaw/workspace/ava/.agent-link/install-result.json
-cat /data/openclaw/.openclaw/channels/dbim_mqtt/ava/state.json
+cat /data/openclaw/.openclaw/channels/aimoo/ava/state.json
+openclaw aimoo --agent ava status
 journalctl --user -u openclaw-gateway.service -n 80 --no-pager
 ```
 
@@ -201,9 +206,9 @@ bash tests/integration/openclaw_owner_friend_cli_flow.sh
 2. `invite`
 3. `accept '<invite_url>'`
 4. `friends`
-5. `send openclaw:<target> ...`
+5. `send <target_public_number> ...`
 6. 对方再执行 `status` / `doctor`
-7. 对方反向 `send openclaw:<main> ...`
+7. 对方反向 `send <main_public_number> ...`
 
 如果失败，先看 `/tmp/a2a-hub-owner-flow-*` 里的每一步输出。
 
@@ -221,7 +226,8 @@ Integration test passed: service publication and thread conversation verified.
 
 ## 7. 常见失败点
 
-- `openclaw dbim-mqtt --agent <id>` 不可用：重新安装插件或检查 OpenClaw 是否加载了新插件
+- `openclaw aimoo --agent <id>` 不可用：重新安装插件或检查 OpenClaw 是否加载了新插件
 - `state.json` 在线但 Hub 不在线：检查 presence、MQTT 认证或网络错误
+- `state.json` 反复 `reconnecting`：先确认是否仍在使用旧插件生成的重复平台 `agentId`；新版插件会自动带 `runtime_identity_key`
 - 真实主人脚本失败：先看 agent 是否真的执行了 CLI，而不是只解释概念
 - 远端 `hk` 执行慢：优先区分是 agent 自然语言执行慢，还是直接 CLI 就慢

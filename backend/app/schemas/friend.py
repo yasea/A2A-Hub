@@ -13,9 +13,12 @@ class FriendResponse(BaseModel):
     target_tenant_id: str
     requester_agent_id: str
     target_agent_id: str
+    requester_public_number: int | None = None
+    target_public_number: int | None = None
     status: str
     context_id: str | None = None
     peer_agent_id: str | None = None
+    peer_public_number: int | None = None
     can_send_message: bool = False
     message: str | None = None
 

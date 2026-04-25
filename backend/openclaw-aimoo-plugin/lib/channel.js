@@ -5,7 +5,7 @@ const { AgentLinkCoreRuntime } = require("./agent-link-core/runtime");
 const { OpenClawSessionRecorder } = require("./openclaw-session-recorder");
 const { shortAgentId } = require("./owner-profile");
 
-class DbimMqttChannel {
+class AimooChannel {
   constructor(api, config) {
     this.api = api;
     this.logger = api?.logger || console;
@@ -16,12 +16,12 @@ class DbimMqttChannel {
   }
 
   async start() {
-    this.logger.info(`dbim-mqtt: starting instance localAgentId=${this.config.localAgentId || this.config.agentId}`);
+    this.logger.info(`aimoo: starting instance localAgentId=${this.config.localAgentId || this.config.agentId}`);
     await this.runtime.start();
   }
 
   async stop() {
-    this.logger.info(`dbim-mqtt: stopping instance localAgentId=${this.config.localAgentId || this.config.agentId}`);
+    this.logger.info(`aimoo: stopping instance localAgentId=${this.config.localAgentId || this.config.agentId}`);
     await this.runtime.stop();
   }
 
@@ -38,7 +38,7 @@ class DbimMqttChannel {
     if (payload?.type !== "task.dispatch") return;
     const taskId = payload.task_id;
     try {
-      this.logger.info(`dbim-mqtt: task ${taskId} start localAgentId=${this.config.localAgentId || this.config.agentId}`);
+      this.logger.info(`aimoo: task ${taskId} start localAgentId=${this.config.localAgentId || this.config.agentId}`);
       await this.recordSessionInbound(payload);
       await messageApi.send({ type: "task.ack", task_id: taskId });
       const result = await this.runHandler(payload);
@@ -51,9 +51,9 @@ class DbimMqttChannel {
         message_text: result.output,
         message_id: `${taskId}:${Date.now()}`,
       });
-      this.logger.info(`dbim-mqtt: task ${taskId} completed localAgentId=${this.config.localAgentId || this.config.agentId}`);
+      this.logger.info(`aimoo: task ${taskId} completed localAgentId=${this.config.localAgentId || this.config.agentId}`);
     } catch (error) {
-      this.logger.error(`dbim-mqtt: task ${taskId} failed: ${String(error)}`);
+      this.logger.error(`aimoo: task ${taskId} failed: ${String(error)}`);
       try {
         await this.recordSessionAssistant(payload, String(error), "FAILED");
         await messageApi.send({
@@ -65,7 +65,7 @@ class DbimMqttChannel {
           message_id: `${taskId}:${Date.now()}:failed`,
         });
       } catch (sendError) {
-        this.logger.error(`dbim-mqtt: failed to report task failure ${taskId}: ${String(sendError)}`);
+        this.logger.error(`aimoo: failed to report task failure ${taskId}: ${String(sendError)}`);
       }
     }
   }
@@ -74,7 +74,7 @@ class DbimMqttChannel {
     try {
       await this.sessionRecorder.recordInboundTask(payload);
     } catch (error) {
-      this.logger.warn(`dbim-mqtt: failed to record inbound session message: ${String(error)}`);
+      this.logger.warn(`aimoo: failed to record inbound session message: ${String(error)}`);
     }
   }
 
@@ -82,7 +82,7 @@ class DbimMqttChannel {
     try {
       await this.sessionRecorder.recordAssistantResult(payload, text, state);
     } catch (error) {
-      this.logger.warn(`dbim-mqtt: failed to record assistant session message: ${String(error)}`);
+      this.logger.warn(`aimoo: failed to record assistant session message: ${String(error)}`);
     }
   }
 
@@ -104,14 +104,13 @@ class DbimMqttChannel {
   runEchoReply(payload) {
     return {
       ok: true,
-      output: `${this.config.agentId} 已通过 dbim_mqtt 收到任务 ${payload.task_id}，输入内容：${payload.input_text || ""}`.trim(),
+      output: `${this.config.agentId} 已通过 aimoo 收到任务 ${payload.task_id}，输入内容：${payload.input_text || ""}`.trim(),
     };
   }
 
   async runOpenClawAgent(payload) {
     const message = this.resolveTaskInputText(payload);
-    // Let the OpenClaw CLI create a valid session ID itself. Older dbim-mqtt
-    // releases generated IDs that newer runtimes reject.
+    // Let the OpenClaw CLI create a valid session ID itself.
     const args = [
       "agent",
       "--agent",
@@ -282,5 +281,5 @@ class DbimMqttChannel {
 }
 
 module.exports = {
-  DbimMqttChannel,
+  AimooChannel,
 };

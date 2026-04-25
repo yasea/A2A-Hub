@@ -1,7 +1,7 @@
 {
-  "name": "dbim-mqtt",
+  "name": "aimoo-link",
   "version": "0.4.0",
-  "description": "DBIM MQTT channel plugin with embedded Agent Link Core",
+  "description": "Aimoo Link MQTT channel plugin with embedded Agent Link Core",
   "main": "index.js",
   "type": "commonjs",
   "license": "MIT",

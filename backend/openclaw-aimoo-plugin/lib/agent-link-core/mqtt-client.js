@@ -39,7 +39,7 @@ class MqttCommandClient {
       };
 
       client.on("connect", () => {
-        this.logger.info("dbim-mqtt: mqtt connected");
+        this.logger.info("aimoo: mqtt connected");
         client.subscribe(cfg.mqttCommandTopic, { qos: cfg.qos }, (err) => {
           if (err) {
             failStartup(new Error(`mqtt subscribe failed: ${String(err)}`));
@@ -55,11 +55,11 @@ class MqttCommandClient {
         try {
           payload = JSON.parse(payloadBuffer.toString("utf8"));
         } catch {
-          this.logger.warn(`dbim-mqtt: invalid mqtt payload on ${topic}`);
+          this.logger.warn(`aimoo: invalid mqtt payload on ${topic}`);
           return;
         }
         Promise.resolve(this.onTask(payload)).catch((err) => {
-          this.logger.error(`dbim-mqtt: task handler failed: ${String(err)}`);
+          this.logger.error(`aimoo: task handler failed: ${String(err)}`);
           this.stateStore.write({
             status: "task_error",
             updatedAt: nowIso(),
@@ -70,7 +70,7 @@ class MqttCommandClient {
       });
 
       client.on("error", (err) => {
-        this.logger.error(`dbim-mqtt: mqtt error: ${String(err)}`);
+        this.logger.error(`aimoo: mqtt error: ${String(err)}`);
         if (!ready) {
           failStartup(err instanceof Error ? err : new Error(String(err)));
           return;

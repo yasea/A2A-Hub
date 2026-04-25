@@ -1,7 +1,8 @@
 "use strict";
 
+const { nowIso } = require("./protocol");
 const { requestJson } = require("./http-client");
-const { localAgentId: resolveLocalAgentId, platformAgentId, readAgentSummary, readOwnerProfile } = require("../owner-profile");
+const { readOwnerProfile, readAgentSummary, localAgentId, platformAgentId } = require("../owner-profile");
 
 function normalizeBootstrap(connectUrl, baseUrl, data) {
   return {
@@ -24,8 +25,8 @@ function normalizeBootstrap(connectUrl, baseUrl, data) {
 async function selfRegister(connectUrl, baseUrl, config) {
   const ownerProfile = readOwnerProfile(config);
   const agentSummary = readAgentSummary(config);
-  const localAgentId = resolveLocalAgentId(config);
-  const agentId = platformAgentId(config.agentId || localAgentId);
+  const localId = localAgentId(config);
+  const agentId = platformAgentId(config.agentId || localId);
   const resp = await requestJson(`${baseUrl}/v1/agent-link/self-register`, {
     method: "POST",
     headers: {
@@ -34,16 +35,16 @@ async function selfRegister(connectUrl, baseUrl, config) {
     },
     body: JSON.stringify({
       agent_id: agentId,
-      display_name: String(localAgentId).toUpperCase(),
+      display_name: String(localId).toUpperCase(),
       capabilities: {
         analysis: true,
         generic: true,
       },
       agent_summary: agentSummary,
       config_json: {
-        workspace: localAgentId,
-        local_agent_id: localAgentId,
-        plugin: "dbim-mqtt",
+        workspace: localId,
+        local_agent_id: localId,
+        plugin: "aimoo-link",
         agent_summary: agentSummary,
       },
       owner_profile: ownerProfile,

@@ -77,7 +77,7 @@
   跑这些测试前，至少保证：
 
   - 背后 handler agent 已在线
-    看 ~/.openclaw/channels/dbim_mqtt/<agent>/state.json 是否 online
+    看 ~/.openclaw/channels/aimoo/<agent>/state.json 是否 online
   - provider tenant 和 consumer tenant 都存在
   - initiator_agent_id 对应的 agent 已注册过
     这个很重要。之前你那次 500，就是因为 openclaw:consumer-prober 没先注册，打到了数据库外键

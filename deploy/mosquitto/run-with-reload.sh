@@ -14,6 +14,10 @@ mtime() {
   stat -c %Y "$1" 2>/dev/null || echo 0
 }
 
+can_reload() {
+  [ -r "$CONFIG_FILE" ] && [ -r "$PASSWORD_FILE" ] && [ -r "$ACL_FILE" ]
+}
+
 last_password="$(mtime "$PASSWORD_FILE")"
 last_acl="$(mtime "$ACL_FILE")"
 last_stamp="$(mtime "$STAMP_FILE")"
@@ -34,7 +38,11 @@ while kill -0 "$MQTT_PID" 2>/dev/null; do
   next_acl="$(mtime "$ACL_FILE")"
   next_stamp="$(mtime "$STAMP_FILE")"
   if [ "$next_password" != "$last_password" ] || [ "$next_acl" != "$last_acl" ] || [ "$next_stamp" != "$last_stamp" ]; then
-    kill -HUP "$MQTT_PID"
+    if can_reload; then
+      kill -HUP "$MQTT_PID"
+    else
+      echo "skip mosquitto reload: config, passwordfile, or aclfile is not readable" >&2
+    fi
     last_password="$next_password"
     last_acl="$next_acl"
     last_stamp="$next_stamp"

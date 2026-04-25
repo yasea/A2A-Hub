@@ -20,8 +20,8 @@ from app.api.routes_agent_link import (
     agent_link_self_register,
     openclaw_connect_page,
     openclaw_connect_markdown,
-    openclaw_dbim_mqtt_install_script,
-    download_dbim_mqtt_plugin,
+    openclaw_aimoo_link_install_script,
+    download_aimoo_link_plugin,
     get_agent_link_manifest,
 )
 from app.api.routes_openclaw import (
@@ -667,12 +667,13 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             auth_token=token,
         )
 
-    async def test_agent_link_self_register_reuses_existing_global_agent_id(self):
-        """当前 agents 表按 agent_id 全局唯一，自注册应复用已有 agent 避免 500。"""
+    async def test_agent_link_self_register_namespaces_common_local_agent_id(self):
+        """公开自注册必须把 main/mia 等本机短名映射为带 runtime key 的平台唯一 id。"""
         db = AsyncMock()
-        db.get = AsyncMock(return_value=SimpleNamespace(tenant_id="owner_old", name="Old Owner"))
+        db.get = AsyncMock(return_value=None)
+        db.add = Mock()
         db.execute = AsyncMock(side_effect=[
-            FakeScalarResult(SimpleNamespace(agent_id="openclaw:mia", tenant_id="owner_old")),
+            FakeScalarResult(None),
         ])
         db.commit = AsyncMock()
         db.rollback = AsyncMock()
@@ -681,7 +682,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             agent_id="openclaw:mia",
             display_name="MIA",
             capabilities={"generic": True},
-            config_json={"local_agent_id": "mia"},
+            config_json={"local_agent_id": "mia", "runtime_identity_key": "rt_hk2_001"},
             owner_profile={"source": "debug", "raw_text": "changed owner profile"},
         )
 
@@ -691,20 +692,19 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             session_cls.return_value.__aenter__ = AsyncMock(return_value=db)
             session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
             registry_cls.return_value.register = AsyncMock(
-                return_value=SimpleNamespace(agent_id="openclaw:mia", tenant_id="owner_old")
+                return_value=SimpleNamespace(agent_id="openclaw:rt_hk2_001:mia", tenant_id="owner_new")
             )
 
             response = await agent_link_self_register(req=req, request=request)
 
         registry_cls.return_value.register.assert_awaited_once()
         kwargs = registry_cls.return_value.register.await_args.kwargs
-        self.assertEqual(kwargs["tenant_id"], "owner_old")
-        self.assertEqual(kwargs["agent_id"], "openclaw:mia")
-        self.assertEqual(kwargs["config_json"]["owner_profile"]["tenant_resolution"], "existing_agent_id")
-        self.assertNotEqual(kwargs["config_json"]["owner_profile"]["requested_owner_tenant_id"], "owner_old")
+        self.assertNotEqual(kwargs["agent_id"], "openclaw:mia")
+        self.assertEqual(kwargs["agent_id"], "openclaw:rt_hk2_001:mia")
+        self.assertEqual(kwargs["config_json"]["local_agent_id"], "mia")
         payload = decode_access_token(response.data.auth_token)
-        self.assertEqual(payload["tenant_id"], "owner_old")
-        self.assertEqual(response.data.tenant_id, "owner_old")
+        self.assertEqual(payload["agent_id"], "openclaw:rt_hk2_001:mia")
+        self.assertEqual(response.data.agent_id, "openclaw:rt_hk2_001:mia")
 
     async def test_agent_link_self_register_persists_agent_summary_and_syncs_mosquitto_auth(self):
         db = AsyncMock()
@@ -720,7 +720,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             display_name="AVA",
             agent_summary="擅长技术排障和多轮协作",
             capabilities={"generic": True},
-            config_json={"local_agent_id": "ava"},
+            config_json={"local_agent_id": "ava", "runtime_identity_key": "rt_ava_001"},
             owner_profile={"source": "debug", "raw_text": "owner profile"},
         )
 
@@ -732,13 +732,13 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
             session_cls.return_value.__aenter__ = AsyncMock(return_value=db)
             session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
             registry_cls.return_value.register = AsyncMock(
-                return_value=SimpleNamespace(agent_id="openclaw:ava", tenant_id="owner_x")
+                return_value=SimpleNamespace(agent_id="openclaw:rt_ava_001:ava", tenant_id="owner_x")
             )
 
             response = await agent_link_self_register(req=req, request=request)
 
         kwargs = registry_cls.return_value.register.await_args.kwargs
-        self.assertEqual(kwargs["agent_id"], "openclaw:ava")
+        self.assertEqual(kwargs["agent_id"], "openclaw:rt_ava_001:ava")
         self.assertEqual(kwargs["config_json"]["agent_summary"], "擅长技术排障和多轮协作")
         sync_mock.assert_awaited_once_with(db)
         self.assertEqual(response.data.agent_summary, "擅长技术排障和多轮协作")
@@ -766,6 +766,31 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.dispatched)
         self.assertEqual(result.reason, "publish_failed")
         self.assertEqual(len(service._pending[("tenant_001", "openclaw:ava")]), 1)
+
+    async def test_agent_link_service_notifies_friend_request(self):
+        """好友请求应通过目标 agent 的 MQTT topic 通知对端主人审批。"""
+        publisher = SimpleNamespace(
+            publish=AsyncMock(return_value=True),
+            last_error=Mock(return_value=None),
+        )
+        service = AgentLinkService(publisher=publisher)
+
+        result = await service.notify_friend_request(
+            requester_tenant_id="tenant_alice",
+            requester_agent_id="openclaw:rt1:alice",
+            requester_public_number=10000001,
+            target_tenant_id="tenant_bob",
+            target_agent_id="openclaw:rt2:bob",
+            target_public_number=10000002,
+            friend_id=7,
+            message="我是 Alice",
+        )
+
+        self.assertTrue(result.dispatched)
+        publish_payload = publisher.publish.await_args.args[1]
+        self.assertEqual(publish_payload["type"], "friend.request")
+        self.assertEqual(publish_payload["friend_id"], 7)
+        self.assertIn("accept-request 7", publish_payload["input_text"])
 
     async def test_agent_link_service_heartbeat_flushes_pending(self):
         """心跳上报时应尝试补发 pending 消息。"""
@@ -842,9 +867,9 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
 
         body = response.body.decode("utf-8")
         self.assertIn("# Agent Link 接入指令", body)
-        self.assertIn("/agent-link/plugins/dbim-mqtt.tar.gz", body)
+        self.assertIn("/agent-link/plugins/aimoo-link.tar.gz", body)
         self.assertIn("/agent-link/prompt", body)
-        self.assertIn("/agent-link/install/openclaw-dbim-mqtt.sh", body)
+        self.assertIn("/agent-link/install/openclaw-aimoo-link.sh", body)
         self.assertIn("AGENT_ID=<local-agent-id>", body)
         self.assertIn("不要猜测", body)
         self.assertIn("重启后继续执行", body)
@@ -878,7 +903,8 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
 
         body = response.body.decode("utf-8")
         self.assertIn("# A2A Hub Agent Link 好友操作说明", body)
-        self.assertIn("openclaw dbim-mqtt --agent <local-agent-id> accept '<invite-url-or-token>'", body)
+        self.assertIn("openclaw aimoo accept '<invite-url-or-token>'", body)
+        self.assertIn("追加 `--agent <local-agent-id>`", body)
         self.assertIn("默认不改 `TOOLS.md`", body)
         self.assertIn("writeWorkspaceTools=true", body)
         self.assertIn("friend_tools_url=https://hub.example.com/agent-link/friend-tools", body)
@@ -926,33 +952,33 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
             response = await get_agent_link_manifest(request=request)
 
-        self.assertEqual(response.data.plugin_download_url, "https://hub.example.com/agent-link/plugins/dbim-mqtt.tar.gz")
+        self.assertEqual(response.data.plugin_download_url, "https://hub.example.com/agent-link/plugins/aimoo-link.tar.gz")
         self.assertEqual(
             response.data.openclaw_install_script_url,
-            "https://hub.example.com/agent-link/install/openclaw-dbim-mqtt.sh",
+            "https://hub.example.com/agent-link/install/openclaw-aimoo-link.sh",
         )
         self.assertEqual(response.data.agent_prompt_url, "https://hub.example.com/agent-link/prompt")
         self.assertEqual(response.data.friend_tools_url, "https://hub.example.com/agent-link/friend-tools")
-        self.assertEqual(response.data.required_plugin, "dbim-mqtt")
+        self.assertEqual(response.data.required_plugin, "aimoo-link")
 
     async def test_openclaw_install_script_configures_channel_plugin(self):
-        """安装脚本应写入 channels.dbim_mqtt，而不是只生成旧 connect_url 文件。"""
+        """安装脚本应写入 channels.aimoo，而不是只生成旧 connect_url 文件。"""
         request = SimpleNamespace(
             base_url="https://hub.example.com/",
             query_params={},
-            url="https://hub.example.com/agent-link/install/openclaw-dbim-mqtt.sh",
+            url="https://hub.example.com/agent-link/install/openclaw-aimoo-link.sh",
         )
 
         with patch.object(settings, "A2A_HUB_PUBLIC_BASE_URL", "https://hub.example.com"):
-            response = await openclaw_dbim_mqtt_install_script(request=request)
+            response = await openclaw_aimoo_link_install_script(request=request)
 
         body = response.body.decode("utf-8")
-        self.assertIn("channels.dbim_mqtt", body)
+        self.assertIn("channels.aimoo", body)
         self.assertIn("instances", body)
         self.assertIn("plugins.allow", body)
         self.assertIn("无法自动推断 AGENT_ID", body)
         self.assertIn("已自动推断 AGENT_ID=", body)
-        self.assertIn("已备份已有 dbim-mqtt 插件目录", body)
+        self.assertIn("已备份已有 aimoo-link 插件目录", body)
         self.assertIn("npm install --omit=dev", body)
         self.assertIn('chmod -R u=rwX,go=rX "$PLUGIN_DIR"', body)
         self.assertIn("异步重启", body)
@@ -982,9 +1008,9 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('INSTANCE_DIR="$INSTANCE_DIR" \\', body)
         self.assertIn("nohup env", body)
 
-    async def test_dbim_mqtt_plugin_package_can_be_downloaded(self):
-        """插件包下载接口应返回可解压的 dbim-mqtt 插件源码。"""
-        response = await download_dbim_mqtt_plugin()
+    async def test_aimoo_link_plugin_package_can_be_downloaded(self):
+        """插件包下载接口应返回可解压的 aimoo-link 插件源码。"""
+        response = await download_aimoo_link_plugin()
         self.assertEqual(response.media_type, "application/gzip")
 
         with tarfile.open(fileobj=io.BytesIO(response.body), mode="r:gz") as tar:
@@ -995,7 +1021,7 @@ class BlockFourToSevenTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("index.js", names)
         self.assertIn("lib/channel.js", names)
         self.assertNotIn("node_modules", names)
-        self.assertIn('"channels": ["dbim_mqtt"]', manifest)
+        self.assertIn('"channels": ["aimoo"]', manifest)
         self.assertIn('"channelConfigs"', manifest)
 
     async def test_openclaw_gateway_handles_task_update_message(self):

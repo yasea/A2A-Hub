@@ -148,6 +148,7 @@ async def register_openclaw_agent(
     return ApiResponse.ok(
         OpenClawAgentRegistrationResponse(
             agent_id=agent.agent_id,
+            public_number=getattr(agent, "public_number", None),
             tenant_id=tenant["tenant_id"],
             agent_summary=agent_summary,
             auth_token=auth_token,
@@ -272,7 +273,7 @@ async def get_openclaw_bootstrap(token: str, request: Request):
         urls = _openclaw_urls(request)
         async with AsyncSessionLocal() as db:
             registry = AgentRegistry(db)
-            await registry.register(
+            agent = await registry.register(
                 agent_id=agent_id,
                 tenant_id=tenant_id,
                 agent_type="federated",
@@ -288,6 +289,7 @@ async def get_openclaw_bootstrap(token: str, request: Request):
         return ApiResponse.ok(
             OpenClawAgentRegistrationResponse(
                 agent_id=agent_id,
+                public_number=getattr(agent, "public_number", None),
                 tenant_id=tenant_id,
                 agent_summary=_normalize_agent_summary(config_json.get("agent_summary"), agent_id, {}, config_json),
                 auth_token=auth_token,

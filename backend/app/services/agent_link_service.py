@@ -191,6 +191,80 @@ class AgentLinkService:
             )
         return AgentLinkDispatchResult(dispatched=True, transport=settings.AGENT_LINK_TRANSPORT, topic=topic)
 
+    async def notify_friend_request(
+        self,
+        *,
+        requester_tenant_id: str,
+        requester_agent_id: str,
+        requester_public_number: int | None,
+        target_tenant_id: str,
+        target_agent_id: str,
+        target_public_number: int | None,
+        friend_id: int,
+        message: str | None = None,
+    ) -> AgentLinkDispatchResult:
+        """Notify the target agent that its owner should approve or reject a friend request."""
+
+        topic = self.command_topic(target_tenant_id, target_agent_id)
+        payload = {
+            "type": "friend.request",
+            "friend_id": friend_id,
+            "tenant_id": target_tenant_id,
+            "target_agent_id": target_agent_id,
+            "target_public_number": target_public_number,
+            "requester_tenant_id": requester_tenant_id,
+            "requester_agent_id": requester_agent_id,
+            "requester_public_number": requester_public_number,
+            "message": message or "",
+            "input_text": (
+                "你收到一个 A2A Hub agent 好友请求。"
+                f"\n请求方好友号: {requester_public_number or requester_agent_id}"
+                f"\n请求方 agent_id: {requester_agent_id}"
+                f"\nfriend_id: {friend_id}"
+                f"\n留言: {message or '无'}"
+                "\n请先询问主人是否同意。主人同意后执行："
+                f"\nopenclaw aimoo --agent <local-agent-id> accept-request {friend_id}"
+                "\n主人拒绝后执行："
+                f"\nopenclaw aimoo --agent <local-agent-id> update-request {friend_id} rejected"
+                "\n不要自动同意好友请求。"
+            ),
+        }
+        published = False
+        if settings.AGENT_LINK_TRANSPORT == "mqtt":
+            published = await self.publisher.publish(
+                topic,
+                payload,
+                username=tenant_mqtt_username(target_tenant_id),
+                password=tenant_mqtt_password(target_tenant_id),
+            )
+            logger.info(
+                "agent_link.friend_request publish friend_id=%s target_agent_id=%s topic=%s published=%s error=%s",
+                friend_id,
+                target_agent_id,
+                topic,
+                published,
+                self.publisher.last_error(),
+            )
+        if not published:
+            await ErrorEventService.record_out_of_band(
+                source_side="platform",
+                stage="friend_request_notify",
+                category="mqtt",
+                summary="好友请求通知下发失败，已进入 pending 队列",
+                tenant_id=target_tenant_id,
+                agent_id=target_agent_id,
+                detail=self.publisher.last_error(),
+                payload={"friend_id": friend_id, "topic": topic},
+            )
+            await self._push_pending(target_tenant_id, target_agent_id, payload)
+            return AgentLinkDispatchResult(
+                dispatched=False,
+                transport=settings.AGENT_LINK_TRANSPORT,
+                reason=self.publisher.last_error() or "agent_not_connected",
+                topic=topic,
+            )
+        return AgentLinkDispatchResult(dispatched=True, transport=settings.AGENT_LINK_TRANSPORT, topic=topic)
+
     async def heartbeat(self, tenant_id: str, agent_id: str, status: str, metadata: dict[str, Any] | None = None, auth_token: str | None = None) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=settings.AGENT_LINK_PRESENCE_TTL_SECONDS)

@@ -33,12 +33,33 @@ class FriendService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def _get_agent(self, agent_id: str) -> Agent | None:
-        result = await self.db.execute(select(Agent).where(Agent.agent_id == agent_id, Agent.status == "ACTIVE"))
+    @staticmethod
+    def _public_number_ref(value: str) -> int | None:
+        text = str(value or "").strip()
+        if text.isdigit() and len(text) >= 8:
+            return int(text)
+        return None
+
+    async def _get_agent(self, agent_ref: str, *, tenant_id: str | None = None) -> Agent | None:
+        public_number = self._public_number_ref(agent_ref)
+        criteria = [Agent.status == "ACTIVE"]
+        if public_number is not None:
+            criteria.append(Agent.public_number == public_number)
+        else:
+            criteria.append(Agent.agent_id == agent_ref)
+        if tenant_id:
+            criteria.append(Agent.tenant_id == tenant_id)
+        result = await self.db.execute(select(Agent).where(*criteria))
         return result.scalar_one_or_none()
 
+    async def resolve_agent_id(self, agent_ref: str) -> str:
+        agent = await self._get_agent(agent_ref)
+        if not agent:
+            raise FriendNotFoundError(f"target agent {agent_ref} 不存在或未激活")
+        return agent.agent_id
+
     async def assert_agent_owned(self, tenant_id: str, agent_id: str) -> Agent:
-        agent = await self._get_agent(agent_id)
+        agent = await self._get_agent(agent_id, tenant_id=tenant_id)
         if not agent or agent.tenant_id != tenant_id:
             raise FriendForbiddenError(f"agent {agent_id} 不存在或不属于当前租户")
         return agent
@@ -98,11 +119,11 @@ class FriendService:
         return friend
 
     async def list_for_agent(self, tenant_id: str, agent_id: str) -> List[AgentFriend]:
-        await self.assert_agent_owned(tenant_id, agent_id)
+        agent = await self.assert_agent_owned(tenant_id, agent_id)
         result = await self.db.execute(
             select(AgentFriend).where(
-                ((AgentFriend.requester_agent_id == agent_id) & (AgentFriend.requester_tenant_id == tenant_id))
-                | ((AgentFriend.target_agent_id == agent_id) & (AgentFriend.target_tenant_id == tenant_id))
+                ((AgentFriend.requester_agent_id == agent.agent_id) & (AgentFriend.requester_tenant_id == tenant_id))
+                | ((AgentFriend.target_agent_id == agent.agent_id) & (AgentFriend.target_tenant_id == tenant_id))
             ).order_by(AgentFriend.created_at.desc())
         )
         return list(result.scalars().all())
@@ -115,11 +136,12 @@ class FriendService:
         friend = await self.get(friend_id)
         if not friend:
             raise FriendNotFoundError("friend request not found")
+        agent = await self.assert_agent_owned(tenant_id, agent_id)
         if (
-            friend.requester_agent_id == agent_id
+            friend.requester_agent_id == agent.agent_id
             and friend.requester_tenant_id == tenant_id
         ) or (
-            friend.target_agent_id == agent_id
+            friend.target_agent_id == agent.agent_id
             and friend.target_tenant_id == tenant_id
         ):
             return friend
@@ -127,7 +149,8 @@ class FriendService:
 
     async def accept(self, friend_id: int, tenant_id: str, agent_id: str) -> AgentFriend:
         friend = await self.get_visible_friend(friend_id, tenant_id, agent_id)
-        if friend.target_agent_id != agent_id or friend.target_tenant_id != tenant_id:
+        agent = await self.assert_agent_owned(tenant_id, agent_id)
+        if friend.target_agent_id != agent.agent_id or friend.target_tenant_id != tenant_id:
             raise FriendForbiddenError("只有被邀请方可以接受好友请求")
         if friend.status == "ACCEPTED":
             return friend
@@ -182,17 +205,22 @@ class FriendService:
             raise FriendConflictError("好友请求状态只能是 accepted、rejected 或 blocked")
         if next_status == "ACCEPTED":
             return await self.accept(friend_id, tenant_id, agent_id)
-        if friend.target_agent_id != agent_id or friend.target_tenant_id != tenant_id:
+        agent = await self.assert_agent_owned(tenant_id, agent_id)
+        if friend.target_agent_id != agent.agent_id or friend.target_tenant_id != tenant_id:
             raise FriendForbiddenError("只有被邀请方可以更新好友请求状态")
         if friend.status not in {"PENDING", next_status}:
             raise FriendConflictError(f"当前状态不允许更新为 {next_status}: {friend.status}")
         friend.status = next_status
         return friend
 
-    def view_payload(self, friend: AgentFriend, tenant_id: str, agent_id: str) -> dict:
-        is_requester = friend.requester_agent_id == agent_id and friend.requester_tenant_id == tenant_id
+    async def view_payload(self, friend: AgentFriend, tenant_id: str, agent_id: str) -> dict:
+        viewer = await self.assert_agent_owned(tenant_id, agent_id)
+        is_requester = friend.requester_agent_id == viewer.agent_id and friend.requester_tenant_id == tenant_id
         context_id = friend.requester_context_id if is_requester else friend.target_context_id
         peer_agent_id = friend.target_agent_id if is_requester else friend.requester_agent_id
+        requester = await self._get_agent(friend.requester_agent_id)
+        target = await self._get_agent(friend.target_agent_id)
+        peer = target if is_requester else requester
         return {
             "id": friend.id,
             "tenant_id": tenant_id,
@@ -200,9 +228,12 @@ class FriendService:
             "target_tenant_id": friend.target_tenant_id,
             "requester_agent_id": friend.requester_agent_id,
             "target_agent_id": friend.target_agent_id,
+            "requester_public_number": requester.public_number if requester else None,
+            "target_public_number": target.public_number if target else None,
             "status": friend.status,
             "context_id": context_id,
             "peer_agent_id": peer_agent_id,
+            "peer_public_number": peer.public_number if peer else None,
             "can_send_message": friend.status == "ACCEPTED" and bool(context_id),
             "message": friend.message,
         }
@@ -212,7 +243,7 @@ class FriendService:
         source_tenant_id: str,
         source_agent_id: str,
         target_agent_id: str,
-    ) -> tuple[str, str, dict[str, str]]:
+    ) -> tuple[str, str, dict[str, str], str]:
         target = await self._get_agent(target_agent_id)
         if not target:
             raise FriendNotFoundError(f"target agent {target_agent_id} 不存在或未激活")
@@ -230,7 +261,7 @@ class FriendService:
 
             if not context_id:
                 raise FriendConflictError("好友会话上下文尚未初始化，请重新接受邀请或重建好友关系")
-            return target_tenant_id, context_id, {"mode": "friend", "friend_id": str(friend.id)}
+            return target_tenant_id, context_id, {"mode": "friend", "friend_id": str(friend.id)}, target.agent_id
 
         if target.tenant_id != source_tenant_id:
             raise FriendForbiddenError("跨租户 agent 对话需要先建立已接受的好友关系")
@@ -253,4 +284,4 @@ class FriendService:
             await self.db.flush()
         await ctx_svc.add_participant(context.context_id, "agent", source_agent_id, role="peer")
         await ctx_svc.add_participant(context.context_id, "agent", target.agent_id, role="self")
-        return target.tenant_id, context.context_id, {"mode": "same_tenant_direct"}
+        return target.tenant_id, context.context_id, {"mode": "same_tenant_direct"}, target.agent_id

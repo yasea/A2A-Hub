@@ -2,6 +2,7 @@
 Docs-test 联调接口：列出 agent、发测试消息、好友查询、任务查询、错误查询。
 """
 import uuid
+import inspect
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -30,6 +31,19 @@ from app.api.routes_messages import create_and_dispatch_message_task
 router = APIRouter(tags=["docs-test"])
 
 
+async def _maybe_await(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _agent_lookup_criteria(agent_ref: str):
+    text = str(agent_ref or "").strip()
+    if text.isdigit() and len(text) >= 8:
+        return Agent.public_number == int(text)
+    return Agent.agent_id == text
+
+
 @router.get("/v1/docs-test/agents", response_model=ApiResponse[list[dict]], include_in_schema=False)
 async def docs_test_list_agents():
     """Swagger 文档页联调窗口使用：列出已注册 agent。"""
@@ -47,6 +61,7 @@ async def docs_test_list_agents():
             {
                 "tenant_id": agent.tenant_id,
                 "agent_id": agent.agent_id,
+                "public_number": agent.public_number,
                 "display_name": agent.display_name,
                 "agent_type": agent.agent_type,
                 "status": agent.status,
@@ -66,7 +81,7 @@ async def docs_test_send_message(req: DocsAgentMessageTestRequest):
         raise HTTPException(status_code=422, detail="target_agent_id 不能为空")
 
     async with AsyncSessionLocal() as db:
-        query = select(Agent).where(Agent.agent_id == target_agent_id, Agent.status == "ACTIVE")
+        query = select(Agent).where(_agent_lookup_criteria(target_agent_id), Agent.status == "ACTIVE")
         if req.tenant_id:
             query = query.where(Agent.tenant_id == req.tenant_id)
         result = await db.execute(query.order_by(Agent.tenant_id.asc()))
@@ -126,12 +141,12 @@ async def docs_test_list_agent_friends(agent_id: str):
     """列出指定 agent 的好友记录（用于 docs 测试面板）。"""
     _ensure_docs_test_enabled()
     async with AsyncSessionLocal() as db:
-        agent = (await db.execute(select(Agent).where(Agent.agent_id == agent_id, Agent.status == "ACTIVE"))).scalars().first()
+        agent = (await db.execute(select(Agent).where(_agent_lookup_criteria(agent_id), Agent.status == "ACTIVE"))).scalars().first()
         if not agent:
             raise HTTPException(status_code=404, detail="agent 不存在或未激活")
         svc = FriendService(db)
-        items = await svc.list_for_agent(agent.tenant_id, agent_id)
-    data = [svc.view_payload(it, agent.tenant_id, agent_id) for it in items]
+        items = await svc.list_for_agent(agent.tenant_id, agent.agent_id)
+    data = [await _maybe_await(svc.view_payload(it, agent.tenant_id, agent.agent_id)) for it in items]
     return ApiResponse.ok(data)
 
 
@@ -144,7 +159,10 @@ async def docs_test_send_as_agent(agent_id: str, req: DocsAgentMessageTestReques
         raise HTTPException(status_code=422, detail="target_agent_id 不能为空")
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Agent).where(Agent.agent_id == target_agent_id, Agent.status == "ACTIVE"))
+        source = (await db.execute(select(Agent).where(_agent_lookup_criteria(agent_id), Agent.status == "ACTIVE"))).scalars().first()
+        if not source:
+            raise HTTPException(status_code=404, detail="source agent not found")
+        result = await db.execute(select(Agent).where(_agent_lookup_criteria(target_agent_id), Agent.status == "ACTIVE"))
         target = result.scalars().first()
         if not target:
             raise HTTPException(status_code=404, detail="target agent not found")
@@ -154,8 +172,8 @@ async def docs_test_send_as_agent(agent_id: str, req: DocsAgentMessageTestReques
                 tenant_id=target.tenant_id,
                 source_channel="docs-test",
                 source_conversation_id=f"docs-test-{uuid.uuid4().hex[:12]}",
-                title=f"Docs as {agent_id} -> {target.agent_id}",
-                metadata={"source": "docs-test-window", "source_agent_id": agent_id, "target_agent_id": target.agent_id},
+                title=f"Docs as {source.agent_id} -> {target.agent_id}",
+                metadata={"source": "docs-test-window", "source_agent_id": source.agent_id, "target_agent_id": target.agent_id},
                 actor_id="platform:docs-test",
             )
             await db.flush()
@@ -164,17 +182,17 @@ async def docs_test_send_as_agent(agent_id: str, req: DocsAgentMessageTestReques
                     context_id=context.context_id,
                     target_agent_id=target.agent_id,
                     parts=[MessagePart(type="text/plain", text=req.message)],
-                    metadata={"source": "docs-test-window", "source_agent_id": agent_id, "target_agent_id": target.agent_id},
+                    metadata={"source": "docs-test-window", "source_agent_id": source.agent_id, "target_agent_id": target.agent_id},
                     idempotency_key=f"docs-test-{uuid.uuid4().hex}",
                 ),
                 db,
                 {
                     "tenant_id": target.tenant_id,
-                    "sub": agent_id,
+                    "sub": source.agent_id,
                     "token_type": "service_account",
                     "scopes": ["messages:send"],
                 },
-                initiator_agent_id=agent_id,
+                initiator_agent_id=source.agent_id,
                 source_system="docs-test-window",
             )
         except Exception:
@@ -194,15 +212,15 @@ async def docs_test_create_friend(agent_id: str, body: dict):
         raise HTTPException(status_code=422, detail="target_agent_id required")
     async with AsyncSessionLocal() as db:
         svc = FriendService(db)
-        source = (await db.execute(select(Agent).where(Agent.agent_id == agent_id, Agent.status == "ACTIVE"))).scalars().first()
+        source = (await db.execute(select(Agent).where(_agent_lookup_criteria(agent_id), Agent.status == "ACTIVE"))).scalars().first()
         if not source:
             raise HTTPException(status_code=404, detail="source agent not found")
-        friend = await svc.create_request(source.tenant_id, agent_id, target_agent_id, message=body.get("message"))
+        friend = await svc.create_request(source.tenant_id, source.agent_id, target_agent_id, message=body.get("message"))
         await db.flush()
         if accept:
             friend = await svc.accept(friend.id, friend.target_tenant_id, friend.target_agent_id)
         await db.commit()
-    return ApiResponse.ok(svc.view_payload(friend, source.tenant_id, agent_id))
+    return ApiResponse.ok(await _maybe_await(svc.view_payload(friend, source.tenant_id, source.agent_id)))
 
 
 @router.get("/v1/docs-test/tasks/{task_id}", response_model=ApiResponse[dict], include_in_schema=False)

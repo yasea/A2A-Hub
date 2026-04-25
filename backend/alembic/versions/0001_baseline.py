@@ -1,10 +1,10 @@
-"""全量 baseline：创建所有核心表。
+"""全量 baseline：创建所有核心表、扩展、函数、触发器和约束。
 
-这是项目首次完整的 Alembic 迁移，涵盖 A2A Hub 全部核心业务表。
+这是项目首次完整的 Alembic 迁移，覆盖 A2A Hub 全部核心业务表。
 后续增量迁移将以此为基线。
 
 Revision ID: 0001_baseline
-Revises: 
+Revises:
 Create Date: 2026-04-16 12:00:00.000000
 """
 from alembic import op
@@ -18,6 +18,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ── 扩展和工具函数 ──────────────────────────────────────────
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    op.execute("""
+        CREATE OR REPLACE FUNCTION set_updated_at()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = now();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+    """)
+
+    # ── tenants ─────────────────────────────────────────────────
     op.create_table('tenants',
         sa.Column('tenant_id', sa.String(), nullable=False),
         sa.Column('name', sa.String(), nullable=False),
@@ -26,11 +39,18 @@ def upgrade() -> None:
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.PrimaryKeyConstraint('tenant_id'),
+        sa.CheckConstraint("status IN ('ACTIVE', 'SUSPENDED', 'CLOSED')", name='ck_tenants_status'),
     )
     op.create_index('idx_tenants_status', 'tenants', ['status'])
+    op.execute("""
+        CREATE TRIGGER tr_tenants_updated_at
+            BEFORE UPDATE ON tenants FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── agents ──────────────────────────────────────────────────
     op.create_table('agents',
         sa.Column('agent_id', sa.String(), nullable=False),
+        sa.Column('public_number', sa.BigInteger(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
         sa.Column('agent_type', sa.String(), nullable=False),
         sa.Column('display_name', sa.String(), nullable=False),
@@ -42,11 +62,20 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('agent_id'),
+        sa.UniqueConstraint('public_number', name='uq_agents_public_number'),
+        sa.CheckConstraint("agent_type IN ('native', 'federated', 'bridged')", name='ck_agents_agent_type'),
+        sa.CheckConstraint("status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')", name='ck_agents_status'),
     )
     op.create_index('idx_agents_tenant', 'agents', ['tenant_id'])
     op.create_index('idx_agents_status', 'agents', ['status'])
     op.create_index('idx_agents_tenant_type', 'agents', ['tenant_id', 'agent_type'])
+    op.create_index('idx_agents_public_number', 'agents', ['public_number'])
+    op.execute("""
+        CREATE TRIGGER tr_agents_updated_at
+            BEFORE UPDATE ON agents FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── contexts ────────────────────────────────────────────────
     op.create_table('contexts',
         sa.Column('context_id', sa.String(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -61,12 +90,18 @@ def upgrade() -> None:
         sa.Column('last_activity_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('context_id'),
+        sa.CheckConstraint("status IN ('OPEN', 'CLOSED', 'ARCHIVED')", name='ck_contexts_status'),
     )
     op.create_index('idx_contexts_tenant', 'contexts', ['tenant_id'])
     op.create_index('idx_contexts_source', 'contexts', ['source_channel', 'source_conversation_id'])
     op.create_index('idx_contexts_status', 'contexts', ['tenant_id', 'status'])
     op.create_index('idx_contexts_activity', 'contexts', [sa.text('last_activity_at DESC')])
+    op.execute("""
+        CREATE TRIGGER tr_contexts_updated_at
+            BEFORE UPDATE ON contexts FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── context_participants ───────────────────────────────────
     op.create_table('context_participants',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('context_id', sa.String(), nullable=False),
@@ -77,9 +112,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['context_id'], ['contexts.context_id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('context_id', 'participant_type', 'participant_id'),
+        sa.CheckConstraint("participant_type IN ('user', 'agent', 'system')", name='ck_context_participants_type'),
     )
     op.create_index('idx_context_participants_context', 'context_participants', ['context_id'])
 
+    # ── rc_room_context_bindings ────────────────────────────────
     op.create_table('rc_room_context_bindings',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -94,6 +131,7 @@ def upgrade() -> None:
     )
     op.create_index('idx_rc_room_bindings_context', 'rc_room_context_bindings', ['context_id'])
 
+    # ── platform_users ──────────────────────────────────────────
     op.create_table('platform_users',
         sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -106,9 +144,15 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('id'),
+        sa.CheckConstraint("role IN ('admin', 'member', 'approver', 'observer')", name='ck_platform_users_role'),
     )
     op.create_index('idx_platform_users_tenant', 'platform_users', ['tenant_id'])
+    op.execute("""
+        CREATE TRIGGER tr_platform_users_updated_at
+            BEFORE UPDATE ON platform_users FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── identity_mappings ───────────────────────────────────────
     op.create_table('identity_mappings',
         sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),
         sa.Column('source_system', sa.String(), nullable=False),
@@ -122,6 +166,7 @@ def upgrade() -> None:
     )
     op.create_index('idx_identity_mappings_platform_user', 'identity_mappings', ['platform_user_id'])
 
+    # ── tasks ───────────────────────────────────────────────────
     op.create_table('tasks',
         sa.Column('task_id', sa.String(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -153,6 +198,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['initiator_agent_id'], ['agents.agent_id'], ondelete='SET NULL'),
         sa.ForeignKeyConstraint(['target_agent_id'], ['agents.agent_id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('task_id'),
+        sa.CheckConstraint(
+            "state IN ('SUBMITTED','ROUTING','WORKING','WAITING_EXTERNAL','AUTH_REQUIRED','COMPLETED','FAILED','CANCELED','EXPIRED')",
+            name='ck_tasks_state',
+        ),
+        sa.CheckConstraint("priority IN ('low','normal','high','urgent')", name='ck_tasks_priority'),
     )
     op.create_index('idx_tasks_context', 'tasks', ['context_id'])
     op.create_index('idx_tasks_tenant_state', 'tasks', ['tenant_id', 'state'])
@@ -169,7 +219,12 @@ def upgrade() -> None:
                      postgresql_where=sa.text('idempotency_key IS NOT NULL'), unique=True)
     op.create_index('uq_tasks_source_message', 'tasks', ['tenant_id', 'source_system', 'source_message_id'],
                      postgresql_where=sa.text('source_system IS NOT NULL AND source_message_id IS NOT NULL'), unique=True)
+    op.execute("""
+        CREATE TRIGGER tr_tasks_updated_at
+            BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── task_messages ───────────────────────────────────────────
     op.create_table('task_messages',
         sa.Column('message_id', sa.String(), nullable=False),
         sa.Column('task_id', sa.String(), nullable=False),
@@ -188,12 +243,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['source_agent_id'], ['agents.agent_id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('message_id'),
         sa.UniqueConstraint('task_id', 'seq_no'),
+        sa.CheckConstraint("role IN ('user','assistant','system','tool')", name='ck_task_messages_role'),
     )
     op.create_index('idx_task_messages_task_seq', 'task_messages', ['task_id', 'seq_no'])
     op.create_index('idx_task_messages_context_seq', 'task_messages', ['context_id', 'seq_no'])
     op.create_index('uq_task_messages_source', 'task_messages', ['source_agent_id', 'source_message_id'],
                      postgresql_where=sa.text('source_agent_id IS NOT NULL AND source_message_id IS NOT NULL'), unique=True)
 
+    # ── task_artifacts ──────────────────────────────────────────
     op.create_table('task_artifacts',
         sa.Column('artifact_id', sa.String(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -213,6 +270,7 @@ def upgrade() -> None:
     op.create_index('idx_artifacts_task', 'task_artifacts', ['task_id'])
     op.create_index('idx_artifacts_context', 'task_artifacts', ['context_id'])
 
+    # ── approvals ──────────────────────────────────────────────
     op.create_table('approvals',
         sa.Column('approval_id', sa.String(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -231,6 +289,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['task_id'], ['tasks.task_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['context_id'], ['contexts.context_id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('approval_id'),
+        sa.CheckConstraint(
+            "status IN ('PENDING','APPROVED','REJECTED','EXPIRED','CANCELED')",
+            name='ck_approvals_status',
+        ),
     )
     op.create_index('idx_approvals_task', 'approvals', ['task_id', 'status'])
     op.create_index('idx_approvals_approver', 'approvals', ['approver_user_id', 'status'],
@@ -239,6 +301,7 @@ def upgrade() -> None:
     op.create_index('uq_approvals_external', 'approvals', ['task_id', 'external_key'],
                      postgresql_where=sa.text('external_key IS NOT NULL'), unique=True)
 
+    # ── deliveries ──────────────────────────────────────────────
     op.create_table('deliveries',
         sa.Column('delivery_id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -259,6 +322,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.ForeignKeyConstraint(['task_id'], ['tasks.task_id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('delivery_id'),
+        sa.CheckConstraint(
+            "target_channel IN ('rocket_chat','openclaw','workbuddy','webhook','telegram','email','other')",
+            name='ck_deliveries_target_channel',
+        ),
+        sa.CheckConstraint(
+            "status IN ('PENDING','SENDING','DELIVERED','FAILED','DEAD')",
+            name='ck_deliveries_status',
+        ),
     )
     op.create_index('idx_deliveries_worker', 'deliveries', ['status', 'next_retry_at'],
                      postgresql_where=sa.text("status IN ('PENDING', 'FAILED')"))
@@ -270,7 +341,12 @@ def upgrade() -> None:
                      postgresql_where=sa.text('trace_id IS NOT NULL'))
     op.create_index('uq_deliveries_idempotency', 'deliveries', ['tenant_id', 'idempotency_key'],
                      postgresql_where=sa.text('idempotency_key IS NOT NULL'), unique=True)
+    op.execute("""
+        CREATE TRIGGER tr_deliveries_updated_at
+            BEFORE UPDATE ON deliveries FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── webhook_nonces ──────────────────────────────────────────
     op.create_table('webhook_nonces',
         sa.Column('nonce', sa.String(), nullable=False),
         sa.Column('source_system', sa.String(), nullable=False),
@@ -280,6 +356,7 @@ def upgrade() -> None:
     )
     op.create_index('idx_webhook_nonces_expires', 'webhook_nonces', ['expires_at'])
 
+    # ── audit_logs ──────────────────────────────────────────────
     op.create_table('audit_logs',
         sa.Column('audit_id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -295,6 +372,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('audit_id'),
+        sa.CheckConstraint("actor_type IN ('user','system','webhook','worker','agent')", name='ck_audit_logs_actor_type'),
     )
     op.create_index('idx_audit_tenant_time', 'audit_logs', ['tenant_id', sa.text('created_at DESC')])
     op.create_index('idx_audit_resource', 'audit_logs', ['resource_type', 'resource_id'])
@@ -302,6 +380,7 @@ def upgrade() -> None:
                      postgresql_where=sa.text('trace_id IS NOT NULL'))
     op.create_index('idx_audit_action', 'audit_logs', ['action'])
 
+    # ── routing_rules ──────────────────────────────────────────
     op.create_table('routing_rules',
         sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -317,7 +396,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index('idx_routing_rules_tenant_priority', 'routing_rules', ['tenant_id', 'is_active', 'priority'])
+    op.execute("""
+        CREATE TRIGGER tr_routing_rules_updated_at
+            BEFORE UPDATE ON routing_rules FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── task_state_transitions ──────────────────────────────────
     op.create_table('task_state_transitions',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('task_id', sa.String(), nullable=False),
@@ -332,12 +416,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['task_id'], ['tasks.task_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('id'),
+        sa.CheckConstraint("actor_type IN ('user','system','agent','worker')", name='ck_task_state_trans_actor_type'),
     )
     op.create_index('idx_task_state_trans_task', 'task_state_transitions', ['task_id', 'created_at'])
     op.create_index('idx_task_state_trans_tenant', 'task_state_transitions', ['tenant_id', sa.text('created_at DESC')])
     op.create_index('idx_task_state_trans_trace', 'task_state_transitions', ['trace_id'],
                      postgresql_where=sa.text('trace_id IS NOT NULL'))
 
+    # ── task_route_hops ─────────────────────────────────────────
     op.create_table('task_route_hops',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('task_id', sa.String(), nullable=False),
@@ -358,6 +444,7 @@ def upgrade() -> None:
     op.create_index('idx_task_route_hops_task', 'task_route_hops', ['task_id', 'hop_seq'])
     op.create_index('idx_task_route_hops_tenant', 'task_route_hops', ['tenant_id'])
 
+    # ── metering_events ─────────────────────────────────────────
     op.create_table('metering_events',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -379,6 +466,7 @@ def upgrade() -> None:
                      postgresql_where=sa.text('task_id IS NOT NULL'))
     op.create_index('idx_metering_event_type', 'metering_events', ['tenant_id', 'event_type', sa.text('created_at DESC')])
 
+    # ── agent_link_error_events ─────────────────────────────────
     op.create_table('agent_link_error_events',
         sa.Column('error_id', sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=True),
@@ -395,6 +483,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('error_id'),
     )
 
+    # ── service_publications ───────────────────────────────────
     op.create_table('service_publications',
         sa.Column('service_id', sa.String(), nullable=False),
         sa.Column('tenant_id', sa.String(), nullable=False),
@@ -413,10 +502,18 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='RESTRICT'),
         sa.ForeignKeyConstraint(['handler_agent_id'], ['agents.agent_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('service_id'),
+        sa.CheckConstraint("visibility IN ('private','listed','direct_link')", name='ck_service_publications_visibility'),
+        sa.CheckConstraint("contact_policy IN ('auto_accept','request_required','deny')", name='ck_service_publications_contact_policy'),
+        sa.CheckConstraint("status IN ('ACTIVE','INACTIVE')", name='ck_service_publications_status'),
     )
     op.create_index('idx_service_publications_tenant', 'service_publications', ['tenant_id'])
     op.create_index('idx_service_publications_status_visibility', 'service_publications', ['status', 'visibility'])
+    op.execute("""
+        CREATE TRIGGER tr_service_publications_updated_at
+            BEFORE UPDATE ON service_publications FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── service_threads ─────────────────────────────────────────
     op.create_table('service_threads',
         sa.Column('thread_id', sa.String(), nullable=False),
         sa.Column('service_id', sa.String(), nullable=False),
@@ -438,11 +535,17 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['initiator_agent_id'], ['agents.agent_id'], ondelete='SET NULL'),
         sa.ForeignKeyConstraint(['handler_agent_id'], ['agents.agent_id'], ondelete='RESTRICT'),
         sa.PrimaryKeyConstraint('thread_id'),
+        sa.CheckConstraint("status IN ('OPEN','CLOSED')", name='ck_service_threads_status'),
     )
     op.create_index('idx_service_threads_consumer', 'service_threads', ['consumer_tenant_id', sa.text('created_at DESC')])
     op.create_index('idx_service_threads_provider', 'service_threads', ['provider_tenant_id', sa.text('created_at DESC')])
     op.create_index('idx_service_threads_service', 'service_threads', ['service_id', sa.text('created_at DESC')])
+    op.execute("""
+        CREATE TRIGGER tr_service_threads_updated_at
+            BEFORE UPDATE ON service_threads FOR EACH ROW EXECUTE PROCEDURE set_updated_at()
+    """)
 
+    # ── service_thread_messages ─────────────────────────────────
     op.create_table('service_thread_messages',
         sa.Column('message_id', sa.String(), nullable=False),
         sa.Column('thread_id', sa.String(), nullable=False),
@@ -460,6 +563,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['linked_task_id'], ['tasks.task_id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('message_id'),
         sa.UniqueConstraint('thread_id', 'seq_no'),
+        sa.CheckConstraint("role IN ('user','assistant','system')", name='ck_service_thread_messages_role'),
     )
     op.create_index('idx_service_thread_messages_thread', 'service_thread_messages', ['thread_id', 'seq_no'])
 
@@ -487,3 +591,4 @@ def downgrade() -> None:
     op.drop_table('contexts')
     op.drop_table('agents')
     op.drop_table('tenants')
+    op.execute("DROP FUNCTION IF EXISTS set_updated_at()")

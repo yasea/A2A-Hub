@@ -213,6 +213,7 @@ class CoreFlowsTest(unittest.IsolatedAsyncioTestCase):
         svc.audit.log = AsyncMock()
         existing = SimpleNamespace(
             agent_id="openclaw:ava",
+            public_number=10000001,
             tenant_id="tenant_001",
             display_name="old",
             capabilities={"generic": True},
@@ -236,6 +237,26 @@ class CoreFlowsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated.capabilities, {"analysis": True})
         self.assertEqual(updated.auth_scheme, "jwt")
         self.assertEqual(updated.config_json, {"base_url": "https://example.com"})
+
+    async def test_agent_register_allocates_public_number(self):
+        """新 Agent 注册时应分配从 10000001 起递增的公开好友号。"""
+        db = AsyncMock()
+        svc = AgentRegistry(db)
+        svc.audit.log = AsyncMock()
+        svc.get = AsyncMock(return_value=None)
+        max_result = Mock()
+        max_result.scalar_one_or_none.return_value = 10000007
+        db.execute = AsyncMock(return_value=max_result)
+        db.add = Mock()
+
+        agent = await svc.register(
+            agent_id="openclaw:ava",
+            tenant_id="tenant_001",
+            agent_type="federated",
+            display_name="AVA",
+        )
+
+        self.assertEqual(agent.public_number, 10000008)
 
     async def test_agent_set_status_raises_not_found(self):
         """更新不存在 Agent 状态时抛出未找到异常。"""
@@ -424,6 +445,7 @@ class CoreFlowsTest(unittest.IsolatedAsyncioTestCase):
         tenant = {"tenant_id": "tenant_001", "sub": "user_1"}
         agent = SimpleNamespace(
             agent_id="openclaw:ava",
+            public_number=10000001,
             tenant_id="tenant_001",
             agent_type="federated",
             display_name="AVA",
@@ -434,7 +456,7 @@ class CoreFlowsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.api.routes_agents.AgentRegistry") as registry_cls:
-            registry_cls.return_value.get = AsyncMock(return_value=agent)
+            registry_cls.return_value.get_by_ref = AsyncMock(return_value=agent)
             response = await get_agent(agent_id="openclaw:ava", db=db, tenant=tenant)
 
         self.assertEqual(response.data.agent_id, "openclaw:ava")

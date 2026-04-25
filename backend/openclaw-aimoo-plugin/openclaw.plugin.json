@@ -1,12 +1,12 @@
 {
-  "id": "dbim-mqtt",
-  "name": "DBIM MQTT",
-  "description": "OpenClaw DBIM MQTT channel plugin with embedded Agent Link Core.",
+  "id": "aimoo-link",
+  "name": "Aimoo Link",
+  "description": "OpenClaw Aimoo Link channel plugin with embedded Agent Link Core.",
   "version": "0.4.0",
-  "channels": ["dbim_mqtt"],
+  "channels": ["aimoo"],
   "channelConfigs": {
-    "dbim_mqtt": {
-      "label": "DBIM MQTT",
+    "aimoo": {
+      "label": "Aimoo Link",
       "description": "A2A Hub Agent Link over MQTT.",
       "schema": {
         "type": "object",
@@ -14,7 +14,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable or disable the DBIM MQTT channel."
+            "description": "Enable or disable the Aimoo Link channel."
           },
           "agentId": {
             "type": "string",
@@ -123,7 +123,7 @@
     "properties": {
       "enabled": {
         "type": "boolean",
-        "description": "Enable or disable the DBIM MQTT channel."
+        "description": "Enable or disable the Aimoo Link channel."
       },
       "agentId": {
         "type": "string",

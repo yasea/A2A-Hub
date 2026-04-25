@@ -61,7 +61,7 @@ function buildSessionKey(agentId, payload) {
   const parts = [
     "agent",
     normalizeAgentId(agentId).toLowerCase(),
-    "dbim-mqtt",
+    "aimoo-link",
     String(payload?.tenant_id || "").trim().toLowerCase(),
     String(payload?.context_id || payload?.task_id || "default").trim().toLowerCase(),
   ].filter(Boolean);
@@ -71,7 +71,7 @@ function buildSessionKey(agentId, payload) {
 function buildOriginId(payload) {
   const tenantId = String(payload?.tenant_id || "tenant").trim() || "tenant";
   const contextId = String(payload?.context_id || payload?.task_id || "context").trim() || "context";
-  return `dbim-mqtt:${tenantId}:${contextId}`;
+  return `aimoo-link:${tenantId}:${contextId}`;
 }
 
 function buildLabel(payload) {
@@ -181,8 +181,8 @@ class OpenClawSessionRecorder {
           abortedLastRun: false,
           chatType: "direct",
           origin: {
-            provider: "dbim-mqtt",
-            surface: "dbim-mqtt",
+            provider: "aimoo-link",
+            surface: "aimoo-link",
             chatType: "direct",
             label,
             from: originId,
@@ -190,11 +190,11 @@ class OpenClawSessionRecorder {
             accountId: normalizeAgentId(this.config.agentId),
           },
           deliveryContext: {
-            channel: "dbim-mqtt",
+            channel: "aimoo-link",
             to: originId,
             accountId: normalizeAgentId(this.config.agentId),
           },
-          lastChannel: "dbim-mqtt",
+          lastChannel: "aimoo-link",
           lastTo: originId,
           lastAccountId: normalizeAgentId(this.config.agentId),
           displayName: label,
@@ -224,7 +224,7 @@ class OpenClawSessionRecorder {
         content: [{ type: "text", text: inputText }],
         timestamp: Date.now(),
       },
-      `dbim-mqtt:user:${payload.task_id || safeShortId()}`,
+      `aimoo-link:user:${payload.task_id || safeShortId()}`,
     );
     return session;
   }
@@ -240,7 +240,7 @@ class OpenClawSessionRecorder {
         content: [{ type: "text", text: text || (state === "FAILED" ? "处理失败" : "处理完成") }],
         api: "openai-responses",
         provider: "openclaw",
-        model: "dbim-mqtt",
+        model: "aimoo-link",
         usage: {
           input: 0,
           output: 0,
@@ -252,7 +252,7 @@ class OpenClawSessionRecorder {
         stopReason: state === "FAILED" ? "error" : "stop",
         timestamp: Date.now(),
       },
-      `dbim-mqtt:assistant:${payload.task_id || safeShortId()}:${state || "completed"}`,
+      `aimoo-link:assistant:${payload.task_id || safeShortId()}:${state || "completed"}`,
     );
     return session;
   }
