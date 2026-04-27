@@ -108,15 +108,17 @@ bash tests/reset_client_agent_link_state.sh --all --remove-plugin
 
 ### 3.3 接入本地 OpenClaw
 
+推荐在当前 agent 会话里先调用 `session_status`，从 `sessionKey`（如 `agent:main:main`）确认短 id 后显式传入：
+
 ```bash
+AGENT_ID=main \
 CONNECT_URL="$API/agent-link/connect" \
 curl -fsSL "$API/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
-如自动识别失败：
+无法取得当前会话信息时，可让脚本自动识别：
 
 ```bash
-AGENT_ID=main \
 CONNECT_URL="$API/agent-link/connect" \
 curl -fsSL "$API/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```

@@ -31,7 +31,7 @@ usage() {
 用法:
   bash tests/upload_to_hub.sh
   bash tests/upload_to_hub.sh --only backend
-  bash tests/upload_to_hub.sh --only backend/app/api/routes_integrations.py
+  bash tests/upload_to_hub.sh --only backend/app/api/routes_agent_link.py
   TARGET_HOST=hub TARGET_PATH=/data/wwwroot/ai-hub bash tests/upload_to_hub.sh --only docker-compose.yml
 
 说明:

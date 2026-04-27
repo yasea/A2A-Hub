@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 import json
 import os
+import importlib.util
+import sys
 
 
 class AgentLinkOpsScriptsTest(unittest.TestCase):
@@ -16,6 +18,16 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
     def test_reset_client_script_has_valid_bash_syntax(self):
         subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "reset_client_agent_link_state.sh")])
 
+    def test_reset_client_help_describes_side_effects(self):
+        output = subprocess.check_output(
+            ["bash", str(self.project_root / "tests" / "reset_client_agent_link_state.sh"), "--help"],
+            text=True,
+        )
+        self.assertIn("OPENCLAW_HOME", output)
+        self.assertIn("openclaw.json", output)
+        self.assertIn("sessions.json", output)
+        self.assertIn("TOOLS.md", output)
+
     def test_openclaw_owner_friend_cli_flow_has_valid_bash_syntax(self):
         subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "integration" / "openclaw_owner_friend_cli_flow.sh")])
 
@@ -24,6 +36,11 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
         self.assertIn("TARGET_OPENCLAW_HOST", body)
         self.assertIn("run_remote_openclaw", body)
         self.assertIn('"friends" in obj', body)
+
+    def test_agent_friends_doc_uses_current_invite_url_path(self):
+        body = (self.project_root / "docs" / "agent-friends.md").read_text(encoding="utf-8")
+        self.assertIn("/v1/agents/invite?token=", body)
+        self.assertNotIn("/agent-link/invite?token=", body)
 
     def test_reset_client_script_cleans_agent_link_artifacts_without_touching_other_config(self):
         script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
@@ -216,6 +233,20 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
 
             self.assertFalse(plugin_dir.exists())
             self.assertTrue(plugin_backup.exists())
+
+    def test_remote_prepare_extracts_agent_id_from_session_key(self):
+        module_path = self.project_root / "tests" / "remote_02_agent_link_prepare.py"
+        spec = importlib.util.spec_from_file_location("remote_02_agent_link_prepare", module_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(module_path.parent))
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path.pop(0)
+
+        self.assertEqual(module.从_session_key_解析_agent_id("agent:mia:main"), "mia")
+        self.assertEqual(module.从_session_key_解析_agent_id("agent:ava:telegram:direct:123"), "ava")
+        self.assertEqual(module.从_session_key_解析_agent_id("bad:mia:main"), "")
 
 
 if __name__ == "__main__":

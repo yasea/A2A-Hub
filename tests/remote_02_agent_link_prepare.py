@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="准备公开 Agent Link 接入信息，并可轮询安装结果镜像")
     parser.add_argument("--api-base", default=os.environ.get("API_BASE") or os.environ.get("API") or 默认平台地址)
     parser.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "mia"))
+    parser.add_argument("--session-key", default=os.environ.get("OPENCLAW_SESSION_KEY") or os.environ.get("SESSION_KEY", ""))
     parser.add_argument("--save-prompt-file", default=os.environ.get("SAVE_PROMPT_FILE", ""))
     parser.add_argument("--wait-result-file", default=os.environ.get("WAIT_RESULT_FILE", ""))
     parser.add_argument("--wait-seconds", type=int, default=int(os.environ.get("WAIT_SECONDS", "90")))
@@ -66,10 +67,18 @@ def 等待安装结果(path_text: str, wait_seconds: int) -> dict:
     raise RuntimeError(f"等待安装结果超时：{path}，最后结果={json.dumps(last_data, ensure_ascii=False)}")
 
 
+def 从_session_key_解析_agent_id(session_key: str) -> str:
+    parts = str(session_key or "").strip().split(":")
+    if len(parts) >= 3 and parts[0] == "agent" and parts[1]:
+        return parts[1]
+    return ""
+
+
 def main() -> int:
     args = parse_args()
     client = ApiClient(args.api_base, verify_tls=args.verify_tls)
-    local_agent_id = args.agent_id.split(":")[-1]
+    local_agent_id = 从_session_key_解析_agent_id(args.session_key) or args.agent_id.split(":")[-1]
+    session_key_example = args.session_key or f"agent:{local_agent_id}:main"
 
     打印分隔("步骤 1：读取公开 Agent Link manifest")
     manifest = 读取公开清单(client)
@@ -90,12 +99,16 @@ def main() -> int:
         "# 推荐：agent 先调用 session_status，从 sessionKey（如 agent:mia:main）解析出本机短 id。\n"
         "AGENT_ID=\"{agent}\" CONNECT_URL=\"{connect}\" \\\n"
         "curl -fsSL \"{script}\" | bash\n\n"
+        "# 如果已拿到原始 sessionKey，也可以直接交给安装脚本校验和解析：\n"
+        "OPENCLAW_SESSION_KEY=\"{session_key}\" CONNECT_URL=\"{connect}\" \\\n"
+        "curl -fsSL \"{script}\" | bash\n\n"
         "# 如果无法取得 session_status，再使用安装脚本自动识别兜底：\n"
         "CONNECT_URL=\"{connect}\" \\\n"
         "curl -fsSL \"{script}\" | bash\n\n"
         "# 如自动识别失败，再补：\n"
         "AGENT_ID=\"{agent}\" CONNECT_URL=\"{connect}\" curl -fsSL \"{script}\" | bash".format(
             agent=local_agent_id,
+            session_key=session_key_example,
             connect=manifest["public_connect_url"],
             script=manifest["openclaw_install_script_url"],
         )

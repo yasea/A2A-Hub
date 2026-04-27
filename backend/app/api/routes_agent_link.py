@@ -1097,7 +1097,7 @@ async def get_agent_link_manifest(request: Request):
                 "这是面向 agent 的公开接入 manifest，不要求主人理解或提供 tenant_id。",
                 "OpenClaw agent 应先安装 aimoo-link 插件，再用 public_connect_url 自注册并建立 MQTT 长连接。",
                 "好友好码、邀请 URL 和 agent-to-agent 消息操作说明见 friend_tools_url。",
-                "安装插件、修改本地 OpenClaw 配置或缺少 agent_id 时，应向主人确认。",
+                "安装插件或修改本地 OpenClaw 配置前应向主人说明；无法从 sessionKey 或本机强信号确定 agent id 时再向主人确认。",
             ],
         )
     )

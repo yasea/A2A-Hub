@@ -77,13 +77,17 @@ http://<host>:1880/agent-link/prompt
 推荐安装命令：
 
 ```bash
+AGENT_ID=<从 session_status.sessionKey 解析出的本机短 id> \
 CONNECT_URL="http://<host>:1880/agent-link/connect" \
 curl -fsSL "http://<host>:1880/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
+无法取得 `session_status` 时可省略 `AGENT_ID`，由安装脚本按 CWD、配置和文件系统信号自动识别。
+
 说明：
 
-- 安装脚本优先自动识别本机短 agent id
+- agent 优先用 `session_status.sessionKey` 自证本机短 agent id
+- 安装脚本会校验 sessionKey 中的 id 是否存在于本机 OpenClaw 环境
 - `AGENT_ID` 可传短 id，也可传 `openclaw:<id>`
 - 正式安装产物只写 `connectUrl`
 - `connectUrlFile` 仅用于本地开发热切换
@@ -91,7 +95,7 @@ curl -fsSL "http://<host>:1880/agent-link/install/openclaw-aimoo-link.sh" | bash
 
 ## Agent ID 自动识别算法
 
-安装脚本在未显式传入 `AGENT_ID` 时，通过“强证据优先 + 置信度评分 + 不确定时失败”的方式推断本机短 agent id。
+安装脚本在未显式传入 `AGENT_ID` 时，通过“强证据优先 + 评分兜底”的方式推断本机短 agent id。
 
 ### 阶段 0：显式输入
 
@@ -157,6 +161,7 @@ cwd.endsWith("/workspace")         →  agent 短 id 为 "main"
 5. 评分接近时优先最近活跃 sessions.json          → tie-breaker
 6. 仍同分且 default:true 参与同分                 → 选取 default
 7. 无任何候选                                    → 失败并提示显式传 AGENT_ID
+8. 仍无法明显区分但存在候选                       → 回退到最高分候选
 ```
 
 ### 设计原则
@@ -165,7 +170,7 @@ cwd.endsWith("/workspace")         →  agent 短 id 为 "main"
 - **强弱信号分层**：身份信号（显式输入、当前会话、workspace）优先；偏好信号（default、mtime）只用于兜底
 - **本地存在性校验**：从 sessionKey 解析出的 id 必须能在本机 OpenClaw 环境中找到，避免错误文本污染
 - **优雅降级**：旧版 OpenClaw 或普通 shell 场景无法提供 `session_status` 时，自动回退到 CWD、配置和文件系统信号
-- **不确定不猜**：没有候选时失败并提示 `AGENT_ID=<本机OpenClaw短agent id>`
+- **无候选不猜**：没有任何候选时失败并提示 `AGENT_ID=<本机OpenClaw短agent id>`
 
 ## 本地结果检查
 

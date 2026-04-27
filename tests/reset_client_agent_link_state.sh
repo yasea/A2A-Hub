@@ -13,10 +13,17 @@ usage() {
   reset_client_agent_link_state.sh [--agent <id> | --all] [--remove-plugin]
 
 说明:
-  清理 OpenClaw 客户端的 Agent Link (aimoo-link) 状态。
+  清理 OpenClaw 客户端的 Agent Link (aimoo-link) 测试状态。
   --agent  指定要清理的 agent 短 id（默认 main）
   --all    清理所有 agent 的 Agent Link 状态
   --remove-plugin  同时删除 aimoo-link 插件目录
+
+影响范围:
+  - 使用 OPENCLAW_HOME（默认 ~/.openclaw）
+  - 更新 openclaw.json 中的 channels.aimoo / plugins.aimoo-link 配置
+  - 删除 channels/aimoo/<agent> 和 workspace*/.agent-link
+  - 清理 sessions.json 中 sessionId 以 aimoo: 开头的会话
+  - 删除 TOOLS.md 中 A2A_HUB_AGENT_LINK_BEGIN/END 标记区段
 EOF
 }
 
