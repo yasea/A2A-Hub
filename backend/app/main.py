@@ -740,7 +740,7 @@ def custom_openapi():
         "/v1/agent-link/self-register",
         "/agent-link/connect",
         "/agent-link/install/openclaw-aimoo-link.sh",
-        "/agent-link/plugins/openclaw-aimoo-link.tar.gz",
+        "/agent-link/plugins/aimoo-link.tar.gz",
         "/openclaw/agents/connect.md",
         "/v1/rocketchat/webhook",
     }

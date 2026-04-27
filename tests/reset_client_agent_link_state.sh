@@ -7,6 +7,19 @@ REMOVE_PLUGIN="false"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_DIR="$OPENCLAW_HOME/plugins/aimoo-link"
 
+usage() {
+  cat <<'EOF'
+用法:
+  reset_client_agent_link_state.sh [--agent <id> | --all] [--remove-plugin]
+
+说明:
+  清理 OpenClaw 客户端的 Agent Link (aimoo-link) 状态。
+  --agent  指定要清理的 agent 短 id（默认 main）
+  --all    清理所有 agent 的 Agent Link 状态
+  --remove-plugin  同时删除 aimoo-link 插件目录
+EOF
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --all)
@@ -21,9 +34,13 @@ while [ "$#" -gt 0 ]; do
       REMOVE_PLUGIN="true"
       shift
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
       echo "未知参数: $1" >&2
-      echo "用法: $0 [--agent <id> | --all] [--remove-plugin]" >&2
+      usage >&2
       exit 1
       ;;
   esac
@@ -45,7 +62,7 @@ if not config_file.exists():
     raise SystemExit(0)
 
 data = json.loads(config_file.read_text(encoding="utf-8"))
-remove_aimoo_plugin_config = mode == "all"
+remove_aimoo_config = mode == "all"
 
 channels = data.get("channels")
 if isinstance(channels, dict):
@@ -71,16 +88,14 @@ if isinstance(channels, dict):
             if top_agent == target:
                 channels.pop("aimoo", None)
             elif not aimoo.get("instances") and not top_agent:
-                # An empty channel without plugin load config makes OpenClaw abort
-                # with: channels.aimoo: unknown channel id: aimoo.
                 channels.pop("aimoo", None)
 
         if not channels.get("aimoo"):
             channels.pop("aimoo", None)
-            remove_aimoo_plugin_config = True
+            remove_aimoo_config = True
 
 plugins = data.get("plugins")
-if remove_aimoo_plugin_config and isinstance(plugins, dict):
+if remove_aimoo_config and isinstance(plugins, dict):
     allow = plugins.get("allow")
     if isinstance(allow, list):
         allow = [item for item in allow if item != "aimoo-link"]
@@ -117,6 +132,12 @@ if remove_aimoo_plugin_config and isinstance(plugins, dict):
     if not plugins:
         data.pop("plugins", None)
 
+# Clean up empty top-level sections
+if isinstance(data.get("channels"), dict) and not data["channels"]:
+    data.pop("channels", None)
+if isinstance(data.get("plugins"), dict) and not data["plugins"]:
+    data.pop("plugins", None)
+
 config_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
@@ -147,19 +168,49 @@ PY
 remove_agent_paths() {
   local short_id="$1"
   rm -rf "$OPENCLAW_HOME/channels/aimoo/$short_id"
+  # Remove aimoo channel dir entirely if empty after removing agent subdir
+  if [ -d "$OPENCLAW_HOME/channels/aimoo" ] && [ -z "$(ls -A "$OPENCLAW_HOME/channels/aimoo" 2>/dev/null)" ]; then
+    rmdir "$OPENCLAW_HOME/channels/aimoo" 2>/dev/null || true
+  fi
   rm -rf "$OPENCLAW_HOME/workspace/$short_id/.agent-link"
   rm -rf "$OPENCLAW_HOME/workspace-$short_id/.agent-link"
-  rm -f "$OPENCLAW_HOME/workspace/$short_id/.agent-link/install-check.log"
-  rm -f "$OPENCLAW_HOME/workspace/$short_id/.agent-link/install-check.log"
   if [ -f "$OPENCLAW_HOME/agents/$short_id/sessions/sessions.json" ]; then
     strip_aimoo_sessions "$OPENCLAW_HOME/agents/$short_id/sessions/sessions.json"
   fi
+  # Remove agent-link section from TOOLS.md (workspace or workspace-<id>)
+  for ws in "$OPENCLAW_HOME/workspace/$short_id" "$OPENCLAW_HOME/workspace-$short_id" "$OPENCLAW_HOME/workspace"; do
+    local tools="$ws/TOOLS.md"
+    if [ -f "$tools" ]; then
+      python3 - "$tools" <<'PY_TOOLS'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+try:
+    text = path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(0)
+
+begin = "<!-- A2A_HUB_AGENT_LINK_BEGIN -->"
+end = "<!-- A2A_HUB_AGENT_LINK_END -->"
+idx = text.find(begin)
+if idx < 0:
+    raise SystemExit(0)
+end_idx = text.find(end)
+if end_idx < 0 or end_idx <= idx:
+    raise SystemExit(0)
+new_text = text[:idx].rstrip() + "\n" + text[end_idx + len(end):].lstrip("\n")
+path.write_text(new_text, encoding="utf-8")
+PY_TOOLS
+    fi
+  done
 }
 
 if [ "$MODE" = "all" ]; then
   rm -rf "$OPENCLAW_HOME/channels/aimoo"
   if [ -d "$OPENCLAW_HOME/workspace" ]; then
     find "$OPENCLAW_HOME/workspace" -maxdepth 2 -type d -name .agent-link -exec rm -rf {} + 2>/dev/null || true
+    find "$OPENCLAW_HOME/workspace" -maxdepth 2 -type f -name install-result.json -path '*/.agent-link/*' -exec rm -f {} + 2>/dev/null || true
   fi
   if [ -d "$OPENCLAW_HOME" ]; then
     find "$OPENCLAW_HOME" -maxdepth 1 -type d -name 'workspace-*' -print0 2>/dev/null | while IFS= read -r -d '' dir; do
@@ -171,6 +222,30 @@ if [ "$MODE" = "all" ]; then
       strip_aimoo_sessions "$file"
     done
   fi
+  # Remove agent-link sections from all workspace TOOLS.md files
+  find "$OPENCLAW_HOME" -maxdepth 3 -name 'TOOLS.md' -path '*/workspace*/TOOLS.md' -print0 2>/dev/null | while IFS= read -r -d '' f; do
+    python3 - "$f" <<'PY_TOOLS_ALL'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+try:
+    text = path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(0)
+
+begin = "<!-- A2A_HUB_AGENT_LINK_BEGIN -->"
+end = "<!-- A2A_HUB_AGENT_LINK_END -->"
+idx = text.find(begin)
+if idx < 0:
+    raise SystemExit(0)
+end_idx = text.find(end)
+if end_idx < 0 or end_idx <= idx:
+    raise SystemExit(0)
+new_text = text[:idx].rstrip() + "\n" + text[end_idx + len(end):].lstrip("\n")
+path.write_text(new_text, encoding="utf-8")
+PY_TOOLS_ALL
+  done
 else
   remove_agent_paths "$TARGET_AGENT"
 fi
@@ -179,5 +254,5 @@ if [ "$REMOVE_PLUGIN" = "true" ]; then
   rm -rf "$PLUGIN_DIR"
 fi
 
-echo "客户端 Agent Link 测试状态已清理。"
+echo "客户端 Agent Link (aimoo-link) 测试状态已清理。"
 echo "OPENCLAW_HOME=$OPENCLAW_HOME mode=$MODE target=$TARGET_AGENT remove_plugin=$REMOVE_PLUGIN"

@@ -222,11 +222,12 @@ class AgentLinkService:
                 f"\n请求方 agent_id: {requester_agent_id}"
                 f"\nfriend_id: {friend_id}"
                 f"\n留言: {message or '无'}"
-                "\n请先询问主人是否同意。主人同意后执行："
-                f"\nopenclaw aimoo --agent <local-agent-id> accept-request {friend_id}"
-                "\n主人拒绝后执行："
-                f"\nopenclaw aimoo --agent <local-agent-id> update-request {friend_id} rejected"
-                "\n不要自动同意好友请求。"
+                "\n\n主人已通过 IM 渠道收到好友请求通知，无需再转发。"
+                "\n主人同意后，执行："
+                f"\nopenclaw aimoo accept-request {friend_id}"
+                "\n主人拒绝后，执行："
+                f"\nopenclaw aimoo update-request {friend_id} rejected"
+                "\n\n重要：不要自动同意好友请求，必须等主人确认。"
             ),
         }
         published = False

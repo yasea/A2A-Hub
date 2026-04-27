@@ -96,7 +96,11 @@ def _namespaced_openclaw_agent_id(agent_id: str, tenant_id: str, config_json: di
     )
     safe_key = _sanitize_agent_identity_part(str(identity_key or ""), fallback="")
     if not safe_key:
-        safe_key = _sanitize_agent_identity_part(str(tenant_id).replace("owner_", ""), fallback="owner")
+        raise HTTPException(
+            status_code=422,
+            detail="runtime_identity_key is required. The client must generate a persistent UUID "
+                   "and include it as config_json.runtime_identity_key in the self-register request.",
+        )
     return f"openclaw:{safe_key}:{local_id}"
 
 

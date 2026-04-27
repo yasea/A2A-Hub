@@ -35,6 +35,18 @@ class AimooChannel {
   }
 
   async handleTaskNow(payload, messageApi) {
+    if (payload?.type === "friend.request") {
+      const text = String(payload.input_text || payload.message_text || "").trim();
+      if (!text) return;
+      this.logger.info(`aimoo: friend.request received localAgentId=${this.config.localAgentId || this.config.agentId} friend_id=${payload.friend_id}`);
+      const result = await this.runOpenClawAgent({ ...payload, type: "task.dispatch", input_text: text });
+      this.logger.info(`aimoo: friend.request handled friend_id=${payload.friend_id} ok=${result.ok}`);
+      const notifyResult = await this.notifyOwner(payload);
+      if (notifyResult) {
+        this.logger.info(`aimoo: friend.request owner notified via channel=${notifyResult.channel} target=${notifyResult.ownerTargetId}`);
+      }
+      return;
+    }
     if (payload?.type !== "task.dispatch") return;
     const taskId = payload.task_id;
     try {
@@ -248,6 +260,112 @@ class AimooChannel {
     if (result.stdout) return result.stdout;
     if (result.stderr) return result.stderr.split(/\r?\n/).filter(Boolean).pop() || "处理成功";
     return "处理成功";
+  }
+
+  parseJsonFromText(text) {
+    const source = String(text || "").trim();
+    if (!source) return null;
+    try { return JSON.parse(source); } catch {}
+    for (let i = 0; i < source.length; i += 1) {
+      if (source[i] !== "[" && source[i] !== "{") continue;
+      try { return JSON.parse(source.slice(i)); } catch {}
+    }
+    return null;
+  }
+
+  buildFriendRequestNotification(payload) {
+    const requester = payload.requester_public_number || payload.requester_agent_id || "unknown";
+    const friendId = payload.friend_id || "?";
+    const message = payload.message || "";
+    let text = `[A2A Hub] 收到好友请求\n`;
+    text += `请求方: ${requester}`;
+    if (message) text += `\n留言: ${message}`;
+    text += `\n\n同意: openclaw aimoo accept-request ${friendId}`;
+    text += `\n拒绝: openclaw aimoo update-request ${friendId} rejected`;
+    return text;
+  }
+
+  async notifyOwner(payload) {
+    const openClaw = this.config.openClawCommand || "openclaw";
+    const localId = shortAgentId(this.config.localAgentId || this.config.agentId);
+
+    try {
+      const agentListResult = await this.spawnProcess(openClaw, ["agents", "list", "--json"], {});
+      if (!agentListResult.ok) {
+        this.logger.warn(`aimoo: notifyOwner: agents list failed: ${agentListResult.stderr || agentListResult.combinedText}`);
+        return null;
+      }
+      const agentList = this.parseJsonFromText(agentListResult.stdout || agentListResult.combinedText);
+      if (!Array.isArray(agentList) || agentList.length === 0) {
+        this.logger.warn("aimoo: notifyOwner: no agents found");
+        return null;
+      }
+      const targetAgent = agentList.find((a) => {
+        const id = String(a.id || "").trim();
+        return id === localId || id.split(":").pop() === localId;
+      }) || agentList.find((a) => a.isDefault === true) || agentList[0];
+      const agentId = String(targetAgent.id || targetAgent.agentId || "").trim();
+      if (!agentId) {
+        this.logger.warn("aimoo: notifyOwner: could not determine agent id");
+        return null;
+      }
+
+      const bindingsResult = await this.spawnProcess(openClaw, ["agents", "bindings", "--agent", agentId, "--json"], {});
+      if (!bindingsResult.ok) {
+        this.logger.warn(`aimoo: notifyOwner: bindings failed: ${bindingsResult.stderr || bindingsResult.combinedText}`);
+        return null;
+      }
+      const bindings = this.parseJsonFromText(bindingsResult.stdout || bindingsResult.combinedText);
+      if (!Array.isArray(bindings) || bindings.length === 0) {
+        this.logger.warn("aimoo: notifyOwner: no bindings found");
+        return null;
+      }
+      const preferred = bindings.find((b) => /telegram/i.test(b.channel || b.match?.channel || ""))
+        || bindings.find((b) => !/aimoo/i.test(b.channel || b.match?.channel || ""))
+        || bindings[0];
+      const channel = preferred.channel || preferred.match?.channel || "";
+
+      const sessionsResult = await this.spawnProcess(openClaw, ["sessions", "--agent", agentId, "--json"], {});
+      if (!sessionsResult.ok) {
+        this.logger.warn(`aimoo: notifyOwner: sessions failed: ${sessionsResult.stderr || sessionsResult.combinedText}`);
+        return null;
+      }
+      const sessions = this.parseJsonFromText(sessionsResult.stdout || sessionsResult.combinedText);
+      let ownerTargetId = null;
+      const sessionsList = Array.isArray(sessions) ? sessions : (sessions?.sessions && Array.isArray(sessions.sessions) ? sessions.sessions : []);
+      for (const session of sessionsList) {
+        const key = String(session.key || session.sessionKey || "");
+        if (!key) continue;
+        const parts = key.split(":");
+        const lastPart = parts[parts.length - 1];
+        if (lastPart && /^\d+$/.test(lastPart)) {
+          ownerTargetId = lastPart;
+          break;
+        }
+      }
+      if (!channel || !ownerTargetId) {
+        this.logger.warn(`aimoo: notifyOwner: cannot resolve channel=${channel} target=${ownerTargetId}`);
+        return null;
+      }
+
+      const notificationText = this.buildFriendRequestNotification(payload);
+      const sendResult = await this.spawnProcess(openClaw, [
+        "message", "send",
+        "--channel", channel,
+        "--target", ownerTargetId,
+        "--message", notificationText,
+      ], {});
+      if (!sendResult.ok) {
+        this.logger.warn(`aimoo: notifyOwner: message send failed: ${sendResult.stderr || sendResult.combinedText}`);
+        return null;
+      }
+
+      this.logger.info(`aimoo: notifyOwner: sent friend.request notification to owner via ${channel}`);
+      return { channel, ownerTargetId };
+    } catch (err) {
+      this.logger.error(`aimoo: notifyOwner error: ${String(err)}`);
+      return null;
+    }
   }
 
   parseShellWords(command) {

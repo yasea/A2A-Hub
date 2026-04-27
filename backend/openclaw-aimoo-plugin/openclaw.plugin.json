@@ -75,7 +75,7 @@
           },
           "writeWorkspaceTools": {
             "type": "boolean",
-            "description": "Opt-in: write A2A Hub helper instructions into workspace TOOLS.md. Defaults to false; helper and runbook are still written under .agent-link."
+            "description": "Write A2A Hub helper instructions into workspace TOOLS.md. Defaults to false; helper and runbook are always written under .agent-link regardless."
           },
           "handlerCommand": {
             "type": "string",
@@ -184,7 +184,7 @@
       },
       "writeWorkspaceTools": {
         "type": "boolean",
-        "description": "Opt-in: write A2A Hub helper instructions into workspace TOOLS.md. Defaults to false; helper and runbook are still written under .agent-link."
+        "description": "Write A2A Hub helper instructions into workspace TOOLS.md. Defaults to true; helper and runbook are also written under .agent-link."
       },
       "handlerCommand": {
         "type": "string",

@@ -207,6 +207,44 @@ console.log(JSON.stringify(instances));
         self.assertIn('"localAgentId":"ava"', output)
         self.assertIn('/workspace/main/USER.md', output)
 
+    def test_aimoo_default_agent_does_not_override_user_profile_hint(self):
+        script = f"""
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const {{ resolvePluginInstances }} = require("{(self.plugin_root / 'lib' / 'config.js').as_posix()}");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "aimoo-"));
+const workspace = path.join(root, ".openclaw", "workspace", "mia");
+fs.mkdirSync(workspace, {{ recursive: true }});
+fs.writeFileSync(path.join(workspace, "USER.md"), "agent_id: mia\\n", "utf8");
+const previousHome = process.env.HOME;
+process.env.HOME = root;
+const instances = resolvePluginInstances({{
+  config: {{
+    agents: {{
+      list: [
+        {{ id: "main" }},
+        {{ id: "ava", default: true }},
+        {{ id: "mia" }}
+      ],
+    }},
+    channels: {{
+      aimoo: {{
+        agentId: "main",
+        userProfileFile: "~/.openclaw/workspace/mia/USER.md",
+        connectUrl: "http://example.com",
+      }},
+    }},
+  }},
+}});
+process.env.HOME = previousHome;
+console.log(JSON.stringify(instances));
+"""
+        output = self.run_node_script(script)
+        self.assertIn('"agentId":"mia"', output)
+        self.assertIn('"localAgentId":"mia"', output)
+        self.assertNotIn('"agentId":"ava"', output)
+
     def test_aimoo_reads_agent_summary_from_soul_md(self):
         script = f"""
 const fs = require("node:fs");

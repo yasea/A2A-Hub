@@ -3,6 +3,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { ensureDir } = require("./state-store");
+const { ensureRuntimeIdentityKey } = require("./bootstrap");
+const { readAgentSummary } = require("../owner-profile");
 
 const TOOLS_BEGIN = "<!-- A2A_HUB_AGENT_LINK_BEGIN -->";
 const TOOLS_END = "<!-- A2A_HUB_AGENT_LINK_END -->";
@@ -89,8 +91,9 @@ function localStatus(config) {
   const dir = controlDir(config);
   const installResult = readJson(path.join(dir, "install-result.json"));
   return {
-    agent_id: config.agentId,
+    agent_id: platformAgentId(config.agentId || config.localAgentId),
     local_agent_id: config.localAgentId,
+    public_number: installResult && installResult.state && (installResult.state.public_number || installResult.state.publicNumber) || null,
     connect_url: config.connectUrl,
     public_friend_tools_url: config.publicFriendToolsUrl || publicFriendToolsUrl(config.connectUrl),
     config_path: config.configPath,
@@ -144,6 +147,7 @@ function publicUrls(config) {
 }
 
 async function register(config) {
+  ensureRuntimeIdentityKey(config);
   const baseUrl = baseUrlFromConnectUrl(config.connectUrl);
   const localAgentId = String(config.localAgentId || config.agentId || "").split(":").pop();
   const rawText = readText(config.userProfileFile);
@@ -156,8 +160,10 @@ async function register(config) {
       local_agent_id: localAgentId,
       plugin: "aimoo-link",
       local_helper: "openclaw aimoo",
+      agent_summary: readAgentSummary(config),
+      runtime_identity_key: config.runtimeIdentityKey || "",
     },
-    owner_profile: rawText ? { source: "openclaw-user-md", raw_text: rawText } : {},
+    owner_profile: rawText ? { source: "openclaw-user-md", raw_text: rawText, local_agent_id: localAgentId } : {},
   };
   const response = await requestJson(\`\${baseUrl}/v1/agent-link/self-register\`, {
     method: "POST",
@@ -200,6 +206,7 @@ async function authed(config, fn) {
     token: data.auth_token,
     agentId: data.agent_id,
     tenantId: data.tenant_id,
+    publicNumber: data.public_number || null,
     inviteUrl: data.invite_url,
     timeoutMs: config.httpTimeoutMs,
   });
@@ -230,6 +237,7 @@ async function main() {
       return {
         agent_id: ctx.agentId,
         tenant_id: ctx.tenantId,
+        public_number: ctx.publicNumber,
         invite_url: ctx.inviteUrl,
       };
     }
@@ -359,7 +367,7 @@ openclaw aimoo --agent ${agentId.split(":").pop()} send openclaw:ava "你好，�
 openclaw aimoo --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
 \`\`\`
 
-Report only safe fields such as agent_id, tenant_id, invite_url, friend_id, status, context_id, task_id, and target_agent_id. Never print auth_token, MQTT password, or a full Authorization header.
+Report only safe fields such as agent_id, public_number, tenant_id, invite_url, friend_id, status, context_id, task_id, and target_agent_id. Never print auth_token, MQTT password, or a full Authorization header.
 
 Current platform agent id: \`${agentId}\`
 ${TOOLS_END}

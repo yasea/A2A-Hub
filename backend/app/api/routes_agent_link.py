@@ -114,7 +114,7 @@ presence_url={urls["presence_url"]}
 
 ## 执行约束
 
-1. 优先自动识别本地 OpenClaw agent id，例如 `mia`。只有自动识别失败时，再询问主人；不要猜测。
+1. 先调用 `session_status`，从当前会话 `sessionKey` 解析本地 OpenClaw agent id，例如 `agent:mia:main` 中的 `mia`。只有自动识别失败时，再询问主人；不要猜测。
 2. 如果需要安装插件或修改 `~/.openclaw/openclaw.json`，先向主人说明将要执行的动作。
 3. 不要向主人索要 tenant_id。平台会根据 `USER.md` 自动派生内部租户。
 4. 不要把 `auth_token`、MQTT password 或完整 bootstrap 响应发到公开聊天窗口。
@@ -124,7 +124,15 @@ presence_url={urls["presence_url"]}
 
 ## 推荐自动安装
 
-在 OpenClaw 所在机器执行：
+在 OpenClaw 所在机器执行。推荐先把 `session_status` 返回的 `sessionKey` 解析成本机短 id 后显式传入：
+
+```bash
+AGENT_ID=<从 sessionKey 解析出的本机短 id> \\
+CONNECT_URL="{urls["public_connect_url"]}" \\
+curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
+```
+
+如果当前运行环境无法调用 `session_status`，再使用自动识别兜底：
 
 ```bash
 CONNECT_URL="{urls["public_connect_url"]}" \\
@@ -269,6 +277,8 @@ set -euo pipefail
 # 这个脚本面向 OpenClaw agent 自动安装 A2A Hub 的 aimoo-link 插件。
 # 可配置环境变量：
 #   AGENT_ID=<local-agent-id>   # 可选；无法自动识别时再传
+#   OPENCLAW_SESSION_KEY=agent:<local-agent-id>:...  # 可选；来自 session_status
+#   SESSION_STATUS_JSON='{"sessionKey":"agent:<local-agent-id>:..."}'  # 可选
 #   CONNECT_URL=__PUBLIC_CONNECT_URL__
 #   OPENCLAW_CONFIG=~/.openclaw/openclaw.json
 
@@ -281,10 +291,22 @@ PLUGIN_URL="__PLUGIN_DOWNLOAD_URL__"
 INSTALL_REPORT_URL="__INSTALL_REPORT_URL__"
 
 AGENT_ID="${AGENT_ID:-${OPENCLAW_AGENT_ID:-}}" 
+AGENT_ID_SOURCE="${AGENT_ID_SOURCE:-}"
+OPENCLAW_SESSION_KEY="${OPENCLAW_SESSION_KEY:-${SESSION_KEY:-}}"
+
+if [ -z "$AGENT_ID" ] && [ -n "$OPENCLAW_SESSION_KEY" ]; then
+  case "$OPENCLAW_SESSION_KEY" in
+    agent:*:*)
+      AGENT_ID="${OPENCLAW_SESSION_KEY#agent:}"
+      AGENT_ID="${AGENT_ID%%:*}"
+      AGENT_ID_SOURCE="session_key"
+      ;;
+  esac
+fi
 
 if [ -z "$AGENT_ID" ]; then
   AGENT_ID="$(
-    OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG="$OPENCLAW_CONFIG" node <<'NODE'
+    OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG="$OPENCLAW_CONFIG" OPENCLAW_SESSION_KEY="$OPENCLAW_SESSION_KEY" SESSION_STATUS_JSON="${SESSION_STATUS_JSON:-}" node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -318,6 +340,25 @@ function readJson(file) {
   }
 }
 
+function agentIdFromSessionKey(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  const match = trimmed.match(/^agent:([^:]+):.+$/);
+  return match ? normalizeAgentId(match[1]) : "";
+}
+
+function sessionKeyFromStatusJson(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed.sessionKey === "string") return parsed.sessionKey;
+    if (typeof parsed.key === "string") return parsed.key;
+    if (parsed.data && typeof parsed.data.sessionKey === "string") return parsed.data.sessionKey;
+    if (parsed.session && typeof parsed.session.sessionKey === "string") return parsed.session.sessionKey;
+  } catch {}
+  return "";
+}
+
 function addCandidate(scores, id, weight) {
   const normalized = normalizeAgentId(id);
   if (!normalized) return;
@@ -342,18 +383,56 @@ const openclawHome = process.env.OPENCLAW_HOME || path.join(process.env.HOME || 
 const configPath = process.env.OPENCLAW_CONFIG || path.join(openclawHome, "openclaw.json");
 const cfg = readJson(configPath);
 const scores = new Map();
-
 const agents = cfg.agents && typeof cfg.agents === "object" ? cfg.agents : {};
 const agentList = Array.isArray(agents.list) ? agents.list : [];
-for (const item of agentList) addCandidate(scores, typeof item === "string" ? item : item && item.id, 2);
+
+function localAgentExists(id) {
+  const normalized = normalizeAgentId(id);
+  if (!normalized) return false;
+  if (fs.existsSync(path.join(openclawHome, "agents", normalized))) return true;
+  if (fs.existsSync(path.join(openclawHome, "workspace", normalized))) return true;
+  if (fs.existsSync(path.join(openclawHome, `workspace-${normalized}`))) return true;
+  return agentList.some((item) => {
+    const candidate = normalizeAgentId(typeof item === "string" ? item : item && item.id);
+    return candidate === normalized;
+  });
+}
+
+const sessionKeyCandidate = agentIdFromSessionKey(process.env.OPENCLAW_SESSION_KEY)
+  || agentIdFromSessionKey(process.env.SESSION_KEY)
+  || agentIdFromSessionKey(sessionKeyFromStatusJson(process.env.SESSION_STATUS_JSON));
+if (sessionKeyCandidate && localAgentExists(sessionKeyCandidate)) {
+  process.stdout.write(sessionKeyCandidate);
+  process.exit(0);
+}
+
+// Phase 1: CWD-based detection — the agent runs from its workspace
+const cwd = process.cwd().replace(/\\/g, "/");
+const cwdMatchWsDash = cwd.match(/\/workspace-([^\/]+)/);
+if (cwdMatchWsDash) addCandidate(scores, cwdMatchWsDash[1], 25);
+const cwdMatchWsSub = cwd.match(/\/workspace\/([^\/]+)/);
+if (cwdMatchWsSub) addCandidate(scores, cwdMatchWsSub[1], 25);
+if (cwd.endsWith("/workspace") || cwd === "/workspace") addCandidate(scores, "main", 25);
+
+// agents.list 中 default:true 仅作为最后 tie-breaker，不能压过当前会话或 workspace 信号
+	let defaultAgent = "";
+	for (const item of agentList) {
+	  if (item && typeof item === "object" && item.default === true && item.id) {
+	    defaultAgent = normalizeAgentId(item.id);
+	  }
+	  addCandidate(scores, typeof item === "string" ? item : item && item.id, 5);
+	  if (item && typeof item === "object" && item.workspace) addCandidate(scores, item.id, 2);
+	  if (item && typeof item === "object" && item.name) addCandidate(scores, item.id, 1);
+	}
+	// default:true 仅作为最后 tie-breaker，不在主评分阶段加分。
 
 const channel = cfg.channels && cfg.channels.aimoo && typeof cfg.channels.aimoo === "object" ? cfg.channels.aimoo : {};
 const instances = Array.isArray(channel.instances) ? channel.instances : [];
 for (const item of instances) {
   if (!item || typeof item !== "object") continue;
-  addCandidate(scores, item.localAgentId, 6);
-  addCandidate(scores, item.agentId, 5);
-  scanWorkspaceFile(scores, item.userProfileFile, 6);
+  addCandidate(scores, item.localAgentId, 30);
+  addCandidate(scores, item.agentId, 25);
+  scanWorkspaceFile(scores, item.userProfileFile, 25);
 }
 
 const workspaceRoot = path.join(openclawHome, "workspace");
@@ -368,18 +447,73 @@ if (fs.existsSync(workspaceRoot)) {
 }
 for (const entry of fs.readdirSync(openclawHome, { withFileTypes: true })) {
   if (!entry.isDirectory() || !entry.name.startsWith("workspace-")) continue;
-  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "USER.md"), 4);
-  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "SOUL.md"), 4);
+  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "USER.md"), 2);
+  scanWorkspaceFile(scores, path.join(openclawHome, entry.name, "SOUL.md"), 2);
 }
 
+// Phase 3: Activity weighting (applied to all candidates)
+function sessionActivityBonus(agentId) {
+  const sessionFile = path.join(openclawHome, "agents", agentId, "sessions", "sessions.json");
+  try {
+    const stat = fs.statSync(sessionFile);
+    const ageMs = Date.now() - stat.mtimeMs;
+    if (ageMs < 3600000) return 10;
+    if (ageMs < 21600000) return 7;
+    if (ageMs < 86400000) return 5;
+    if (ageMs < 604800000) return 2;
+    return 1;
+  } catch {
+    return 0;
+  }
+}
+function agentDirExists(id) {
+  return fs.existsSync(path.join(openclawHome, "agents", id, "agent")) ? 2 : 0;
+}
+for (const [id] of scores) {
+  addCandidate(scores, id, sessionActivityBonus(id));
+  addCandidate(scores, id, agentDirExists(id));
+}
+
+// Phase 4: Decision
 const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+if (ranked.length === 0) {
+  process.exit(1);
+}
 if (ranked.length === 1) {
   process.stdout.write(ranked[0][0]);
   process.exit(0);
 }
-if (ranked.length >= 2 && ranked[0][1] > ranked[1][1]) {
+// clear winner: score > 2x runner-up (CWD gives +25, easily clears this)
+if (ranked[0][1] > ranked[1][1] * 2) {
   process.stdout.write(ranked[0][0]);
+  process.exit(0);
 }
+// likely winner: score > runner-up + 8
+if (ranked[0][1] > ranked[1][1] + 8) {
+  process.stdout.write(ranked[0][0]);
+  process.exit(0);
+}
+// tiebreaker: most recently active sessions
+const agentsDir = path.join(openclawHome, "agents");
+let bestId = "";
+let bestTime = 0;
+for (const [id] of ranked) {
+  const sfile = path.join(agentsDir, id, "sessions", "sessions.json");
+  try {
+    const stat = fs.statSync(sfile);
+    if (stat.mtimeMs > bestTime) { bestTime = stat.mtimeMs; bestId = id; }
+  } catch {}
+}
+if (bestId) {
+  process.stdout.write(bestId);
+  process.exit(0);
+}
+// default:true 仅作为最后 tie-breaker：只有同分时才选择 default。
+if (defaultAgent && scores.has(defaultAgent) && scores.get(defaultAgent) === ranked[0][1]) {
+  process.stdout.write(defaultAgent);
+  process.exit(0);
+}
+process.stdout.write(ranked[0][0]);
 NODE
   )"
   AGENT_ID="$(printf '%s' "$AGENT_ID" | tr -d '\r\n')"
@@ -393,6 +527,10 @@ fi
 if printf '%s' "$AGENT_ID" | grep -q ':'; then
   AGENT_ID="${AGENT_ID##*:}"
   echo "已将平台 agent id 转换为本机短 id：$AGENT_ID"
+fi
+
+if [ "$AGENT_ID_SOURCE" = "session_key" ]; then
+  echo "已从 session_status sessionKey 识别 AGENT_ID=$AGENT_ID"
 fi
 
 if ! command -v node >/dev/null 2>&1; then
@@ -820,9 +958,22 @@ def _agent_link_prompt_text(request: Request) -> str:
 步骤：
 
 1. 打开接入说明：{urls["public_connect_url"]}
-2. 确认本机 OpenClaw 短 agent id，例如 mia 或 ava；不确定时只问主人 agent id，不问 tenant_id。
+2. 确认本机 OpenClaw 短 agent id。按以下方法自行判断，不要问主人：
+   - 先调用 `session_status`，读取当前会话 `sessionKey`；`sessionKey` 形如 `agent:mia:main` 时，本机短 agent id 是第二段 `mia`
+   - 如果不能调用 `session_status`，再检查当前工作目录（pwd）：若路径包含 workspace-{name}（如 workspace-mia），则你的 agent id 是 {name}
+   - 若 pwd 刚好是 workspace（无后缀），则 agent id 是 main
+   - 若以上都不匹配，读取 ~/.openclaw/openclaw.json 中 agents.list、workspace 字段和 channels.aimoo.instances；default:true 只能作为最后兜底，不要优先猜它
+   - 也可执行 `ls ~/.openclaw/workspace-*` 列出所有 workspace 辅助判断
 3. 先说明你将安装或升级 aimoo-link、修改 ~/.openclaw/openclaw.json，并重启 OpenClaw Gateway。
-4. 在本机执行下面命令，把 <local-agent-id> 替换为确认后的短 agent id：
+4. 在本机执行下面命令，把 <local-agent-id> 替换为确认后的短 agent id。推荐优先使用从当前 `sessionKey` 解析出的值：
+
+```bash
+AGENT_ID=<从 sessionKey 解析出的本机短 id> \\
+CONNECT_URL="{urls["public_connect_url"]}" \\
+curl -fsSL "{urls["openclaw_install_script_url"]}" | bash
+```
+
+如果当前环境无法拿到 `session_status`，再使用传统候选：
 
 ```bash
 AGENT_ID=<local-agent-id> \\

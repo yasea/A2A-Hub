@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh hk2 *)",
+      "WebFetch(domain:github.com)",
+      "Read(//home/ocw/.openclaw/**)",
+      "Bash(bash tests/upload_to_hub.sh)",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec api alembic upgrade head 2>&1 || true\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose up -d api && sleep 5 && docker compose logs api --tail 30 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init --tail 20 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | grep -i 'error\\\\|already\\\\|duplicate\\\\|relation\\\\|ProgrammingError\\\\|f405\\\\|alembic' | head -20\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | tail -30\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec -T postgres psql -U a2a_hub -d a2a_hub -c \\\\\"SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name\\\\\" 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec -T postgres psql -U a2a_hub -d a2a_hub -c \\\\\"SELECT * FROM alembic_version\\\\\" 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec -T postgres psql -U a2a_hub -d a2a_hub -c \\\\\"SELECT column_name FROM information_schema.columns WHERE table_name='agents' ORDER BY ordinal_position\\\\\" 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec -T postgres psql -U a2a_hub -d a2a_hub -c \\\\\"SELECT proname FROM pg_proc WHERE proname='set_updated_at'\\\\\" 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | tail -40\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | tail -20\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | grep -E 'stamp|patch|upgrade|INFO|已就绪|修补|alembic|ERROR|错误|失败|完成' | head -30\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | grep -E 'stamp' | head -10\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | grep -E '检测|修补|stamp|写入|已有|全新|alembic|升级|完成|版本|成功|失败|ERROR' | head -20\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | grep -E 'write_alembic|INSERT INTO|programming|already|exist|duplicate|error' | head -10\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | tail -10\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose logs db-init 2>&1 | head -10\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec -T postgres psql -U a2a_hub -d a2a_hub -c \\\\\"SELECT public_number FROM agents LIMIT 5\\\\\" 2>&1\")",
+      "Bash(sshpass -e ssh hub \"cd /data/wwwroot/ai-hub && docker compose exec api alembic upgrade head 2>&1\")"
+    ]
+  }
+}

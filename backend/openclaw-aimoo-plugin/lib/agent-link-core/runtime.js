@@ -1,7 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
-const { fetchBootstrap } = require("./bootstrap");
+const { ensureRuntimeIdentityKey, fetchBootstrap } = require("./bootstrap");
 const { AgentMessageApi } = require("./message-api");
 const { MqttCommandClient } = require("./mqtt-client");
 const { PresenceClient } = require("./presence");
@@ -24,7 +24,7 @@ function writeInstallResultMirrors(config, state) {
     detail: null,
     localAgentId: config.localAgentId || config.agentId,
     connectUrl: config.connectUrl || null,
-    state,
+    state: { ...state, public_number: state.publicNumber || state.public_number || null },
     userProfileFile: config.userProfileFile || null,
     updatedAt: nowIso(),
   };
@@ -61,10 +61,15 @@ class AgentLinkCoreRuntime {
     return this.config.localAgentId || this.config.agentId;
   }
 
+  _ensureRuntimeIdentityKey() {
+    ensureRuntimeIdentityKey(this.config);
+  }
+
   async start() {
     if (!this.config.enabled || this.started) return;
     this.started = true;
     this.logger.info(`aimoo: runtime start localAgentId=${this.config.localAgentId || this.config.agentId}`);
+    this._ensureRuntimeIdentityKey();
     ensureDir(this.config.stateFile);
     ensureDir(this.config.connectUrlFile);
     if (!fs.existsSync(this.config.connectUrlFile)) fs.writeFileSync(this.config.connectUrlFile, "", "utf8");
@@ -168,6 +173,7 @@ class AgentLinkCoreRuntime {
         topic: this.currentBootstrap.mqttCommandTopic,
         agentId: this.currentBootstrap.agentId,
         tenantId: this.currentBootstrap.tenantId,
+        publicNumber: this.currentBootstrap.publicNumber || null,
       });
       writeAgentLinkLocalControl(this.config, this.currentBootstrap);
       this.logger.info(

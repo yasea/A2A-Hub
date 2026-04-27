@@ -6,7 +6,7 @@
 当前脚本只围绕最新方案：
 1. 读取公开 manifest，打印 prompt/connect/install/plugin URL
 2. 可选：直接下载 /agent-link/prompt，保存成一份可转发给 agent 的文本
-3. 可选：根据本机 agent id 生成推荐安装命令
+3. 可选：根据当前 sessionKey 或本机 agent id 生成推荐安装命令
 4. 可选：轮询 workspace 安装结果镜像，确认 install-result.json 是否成功
 
 当前统一走公开 `/agent-link/connect`，不再写本地 `connect-url.txt`。
@@ -87,6 +87,10 @@ def main() -> int:
 
     打印分隔("步骤 3：推荐安装命令")
     print(
+        "# 推荐：agent 先调用 session_status，从 sessionKey（如 agent:mia:main）解析出本机短 id。\n"
+        "AGENT_ID=\"{agent}\" CONNECT_URL=\"{connect}\" \\\n"
+        "curl -fsSL \"{script}\" | bash\n\n"
+        "# 如果无法取得 session_status，再使用安装脚本自动识别兜底：\n"
         "CONNECT_URL=\"{connect}\" \\\n"
         "curl -fsSL \"{script}\" | bash\n\n"
         "# 如自动识别失败，再补：\n"

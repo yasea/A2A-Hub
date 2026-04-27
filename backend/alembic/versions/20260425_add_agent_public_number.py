@@ -2,7 +2,8 @@
 
 This migration adds the public_number column that was missing from
 the original create_all-based schema. It is a no-op for fresh
-databases created by the baseline migration.
+databases created by the baseline migration (which already includes
+the column).
 
 Revision ID: 20260425_add_agent_public_number
 Revises: 20260418_expand_agent_friends_contexts
@@ -18,6 +19,15 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    col_exists = conn.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = 'agents' AND column_name = 'public_number'"
+        )
+    ).scalar()
+    if col_exists:
+        return
     op.add_column("agents", sa.Column("public_number", sa.BigInteger(), nullable=True))
     op.execute(
         """
@@ -32,6 +42,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
+    col_exists = conn.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = 'agents' AND column_name = 'public_number'"
+        )
+    ).scalar()
+    if not col_exists:
+        return
     op.drop_index("idx_agents_public_number", table_name="agents")
     op.drop_constraint("uq_agents_public_number", "agents", type_="unique")
     op.drop_column("agents", "public_number")

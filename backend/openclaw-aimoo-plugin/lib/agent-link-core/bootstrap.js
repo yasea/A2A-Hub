@@ -1,8 +1,33 @@
 "use strict";
 
+const fs = require("node:fs");
 const { nowIso } = require("./protocol");
 const { requestJson } = require("./http-client");
 const { readOwnerProfile, readAgentSummary, localAgentId, platformAgentId } = require("../owner-profile");
+const { ensureDir } = require("./state-store");
+
+function ensureRuntimeIdentityKey(config) {
+  if (typeof config !== "object" || !config) return;
+  if (config.runtimeIdentityKey) return;
+  const keyFile = config.runtimeIdentityKeyFile;
+  if (!keyFile) return;
+  try {
+    const existing = fs.readFileSync(keyFile, "utf8").trim();
+    if (existing) {
+      config.runtimeIdentityKey = existing;
+      return;
+    }
+  } catch {}
+  const { randomUUID } = require("node:crypto");
+  const newKey = randomUUID().replace(/-/g, "");
+  try {
+    ensureDir(keyFile);
+    fs.writeFileSync(keyFile, newKey, "utf8");
+    config.runtimeIdentityKey = newKey;
+  } catch {
+    // Non-fatal: backend will reject if identity_key is missing
+  }
+}
 
 function normalizeBootstrap(connectUrl, baseUrl, data) {
   return {
@@ -18,11 +43,13 @@ function normalizeBootstrap(connectUrl, baseUrl, data) {
     mqttPassword: data.mqtt_password,
     presenceUrl: data.presence_url,
     agentMessageUrl: `${baseUrl}/v1/agent-link/messages`,
+    publicNumber: data.public_number || null,
     qos: data.qos || 1,
   };
 }
 
 async function selfRegister(connectUrl, baseUrl, config) {
+  ensureRuntimeIdentityKey(config);
   const ownerProfile = readOwnerProfile(config);
   const agentSummary = readAgentSummary(config);
   const localId = localAgentId(config);
@@ -46,6 +73,7 @@ async function selfRegister(connectUrl, baseUrl, config) {
         local_agent_id: localId,
         plugin: "aimoo-link",
         agent_summary: agentSummary,
+        runtime_identity_key: config.runtimeIdentityKey || "",
       },
       owner_profile: ownerProfile,
     }),
@@ -81,5 +109,6 @@ async function fetchBootstrap(connectUrl, config = {}) {
 }
 
 module.exports = {
+  ensureRuntimeIdentityKey,
   fetchBootstrap,
 };

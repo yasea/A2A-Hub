@@ -18,6 +18,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic 默认创建 alembic_version 时使用 VARCHAR(32)，
+    # 但我们的 revision ID（如 20260418_expand_agent_friends_contexts）超过 32 字符，
+    # 因此先加宽列宽。Alembic 在运行迁移之前就创建了 alembic_version 表，
+    # 所以这里 ALTER TABLE 一定在迁移链写入长 revision ID 之前执行。
+    op.execute(
+        "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)"
+    )
+
     # ── 扩展和工具函数 ──────────────────────────────────────────
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     op.execute("""
@@ -569,6 +577,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Alembic 会自动 DROP alembic_version，这里只 DROP 业务表
     op.drop_table('service_thread_messages')
     op.drop_table('service_threads')
     op.drop_table('service_publications')

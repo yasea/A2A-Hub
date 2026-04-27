@@ -136,19 +136,49 @@ function configuredAgentIds(api) {
   return values;
 }
 
+function defaultAgentId(api) {
+  const root = api?.config && typeof api.config === "object" ? api.config : {};
+  const agents = root.agents && typeof root.agents === "object" ? root.agents : {};
+  const rawList = Array.isArray(agents.list) ? agents.list : [];
+  for (const item of rawList) {
+    if (item && typeof item === "object" && item.default === true && item.id) {
+      return normalizeAgentId(item.id);
+    }
+  }
+  return "";
+}
+
+function activeAgentId(api) {
+  const root = api?.config && typeof api.config === "object" ? api.config : {};
+  const agents = root.agents && typeof root.agents === "object" ? root.agents : {};
+  const rawList = Array.isArray(agents.list) ? agents.list : [];
+  const nonMain = [];
+  const mainEntry = [];
+  for (const item of rawList) {
+    const id = normalizeAgentId(typeof item === "string" ? item : item && item.id);
+    if (!id) continue;
+    if (id === "main") mainEntry.push(id);
+    else nonMain.push(id);
+  }
+  if (nonMain.length === 1) return nonMain[0];
+  if (nonMain.length === 0 && mainEntry.length === 1) return "main";
+  return "";
+}
+
 function inferAgentId(api, merged, fallbackAgentId) {
+  const defaultId = defaultAgentId(api);
   const explicitAgentId = normalizeAgentId(merged.agentId || merged.localAgentId || fallbackAgentId);
   const fileHints = detectAgentHintsFromFiles(merged.userProfileFile);
-  const configAgents = configuredAgentIds(api);
-  const nonMainConfigAgents = configAgents.filter((item) => item !== "main");
+  const singleActive = activeAgentId(api);
 
   if (explicitAgentId && explicitAgentId !== "main") return explicitAgentId;
   for (const hint of fileHints) {
     if (hint !== "main") return hint;
   }
-  if (explicitAgentId === "main" && nonMainConfigAgents.length === 1) return nonMainConfigAgents[0];
-  if (!explicitAgentId && nonMainConfigAgents.length === 1) return nonMainConfigAgents[0];
-  if (!explicitAgentId && configAgents.length === 1) return configAgents[0];
+  if (singleActive && singleActive !== "main") return singleActive;
+  if (explicitAgentId === "main" && singleActive) return singleActive;
+  if (!explicitAgentId && singleActive) return singleActive;
+  if (!explicitAgentId && defaultId) return defaultId;
   return explicitAgentId || normalizeAgentId(fallbackAgentId) || "ava";
 }
 
@@ -186,7 +216,7 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
     runtimeIdentityKeyFile: expandHome(
       typeof merged.runtimeIdentityKeyFile === "string" && merged.runtimeIdentityKeyFile.trim()
         ? merged.runtimeIdentityKeyFile.trim()
-        : "",
+        : path.join("~/.openclaw", "channels", "aimoo", shortId, "runtime-identity-key"),
     ),
     presenceIntervalSec:
       Number.isInteger(merged.presenceIntervalSec) && merged.presenceIntervalSec > 0
@@ -236,6 +266,15 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
         : false,
     instanceId: shortId,
   };
+
+  if (!result.runtimeIdentityKey && result.runtimeIdentityKeyFile) {
+    try {
+      const existingKey = fs.readFileSync(result.runtimeIdentityKeyFile, "utf8").trim();
+      if (existingKey) result.runtimeIdentityKey = existingKey;
+    } catch {}
+  }
+
+  return result;
 }
 
 function resolvePluginInstances(api) {

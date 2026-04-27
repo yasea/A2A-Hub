@@ -111,7 +111,7 @@ def _ensure_alembic_version(url: str) -> None:
             ))
             await conn.execute(text("DELETE FROM alembic_version"))
             await conn.execute(text(
-                "INSERT INTO alembic_version (version_num) VALUES ('20260418_expand_agent_friends_contexts')"
+                "INSERT INTO alembic_version (version_num) VALUES ('20260425_add_agent_public_number')"
             ))
         await eng.dispose()
 
@@ -178,6 +178,14 @@ async def main() -> None:
 
     # 已有版本记录——直接升级
     if await _has_alembic_version(url):
+        # 确保 alembic_version.version_num 列足够宽（旧 CREATE TABLE 使用了 VARCHAR(32)）
+        from sqlalchemy.ext.asyncio import create_async_engine
+        eng = create_async_engine(url)
+        async with eng.begin() as conn:
+            await conn.execute(text(
+                "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)"
+            ))
+        await eng.dispose()
         print("数据库已有 alembic 版本记录，执行增量迁移...")
         run_alembic_upgrade()
     else:
@@ -195,8 +203,8 @@ async def main() -> None:
             print("检测到旧版数据库，修补缺失结构...")
             await _apply_legacy_patches(url)
             print("修补完成，写入版本记录...")
-            # 旧数据库已包含 baseline 全部表结构，直接写入版本号跳过 baseline
-            await _write_alembic_version(url, "20260418_expand_agent_friends_contexts")
+            # 旧数据库已包含 baseline 全部表结构，直接写入最新版本号跳过所有迁移
+            await _write_alembic_version(url, "20260425_add_agent_public_number")
             # 再执行增量迁移（若有的话）
             print("执行增量迁移...")
         else:

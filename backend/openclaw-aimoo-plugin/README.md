@@ -9,11 +9,12 @@
 ## 自动安装
 
 ```bash
+AGENT_ID=<从 session_status.sessionKey 解析出的本机短 id> \
 CONNECT_URL="http://<平台IP或域名>:1880/agent-link/connect" \
 curl -fsSL "http://<平台IP或域名>:1880/agent-link/install/openclaw-aimoo-link.sh" | bash
 ```
 
-安装脚本会优先自动识别本机短 agent id。只有自动识别失败时，才需要补 `AGENT_ID=<本机OpenClaw短agent id>`；也允许传平台侧完整 id `openclaw:mia`，脚本会自动归一化。如果本地已有插件，安装脚本会先备份旧目录再安装新版本。要在同一个 OpenClaw Gateway 里接多个 agent，就分别执行一次，例如先 `AGENT_ID=ava`，再 `AGENT_ID=mia`。
+推荐 agent 先调用 `session_status`，从形如 `agent:mia:main` 的 `sessionKey` 解析出本机短 agent id。无法取得当前会话时，也可以只传 `CONNECT_URL` 让安装脚本自动识别。自动识别失败时再补 `AGENT_ID=<本机OpenClaw短agent id>`；也允许传平台侧完整 id `openclaw:mia`，脚本会自动归一化。如果本地已有插件，安装脚本会先备份旧目录再安装新版本。要在同一个 OpenClaw Gateway 里接多个 agent，就分别执行一次，例如先 `AGENT_ID=ava`，再 `AGENT_ID=mia`。
 
 如果 OpenClaw 报 `channels.aimoo: unknown channel id: aimoo`，说明本机仍是旧插件 manifest 或配置先于插件加载。还要检查日志里是否有 `world-writable path`，如果插件目录权限过宽，OpenClaw 会阻止加载插件。重新运行当前安装脚本，让 OpenClaw 先识别新插件包里的 `channels: ["aimoo"]`，并修正插件目录权限。
 
@@ -88,8 +89,9 @@ openclaw agent --agent mia ...
 chmod -R u=rwX,go=rX ~/.openclaw/plugins/aimoo-link
 ```
 
-安装脚本会自动识别本机 workspace 结构：
+安装脚本会先使用当前会话信号，再自动识别本机 workspace 结构：
 
+- `session_status.sessionKey` 是最高优先级运行时信号；`default:true` 只作为最后同分兜底。
 - 优先使用 `~/.openclaw/workspace/<agent>/...`
 - 若本机仍是旧布局，则回退到 `~/.openclaw/workspace-<agent>/...`
 - 若配置里只有 `main`，插件会继续结合 `USER.md`、同目录 `SOUL.md` 和 `agents.list` 自动推断真实短 agent id。
