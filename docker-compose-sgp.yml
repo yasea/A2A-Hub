@@ -1,54 +1,49 @@
-# Docker Compose 配置
+# Docker Compose 配置 - SGP 服务器版本
+# 所有服务使用 host 网络模式，直接访问宿主机 PostgreSQL
 # 工作目录：项目根目录
 # .env 文件位置：同目录
-# backend 源码位置：./
 
 services:
   api:
     build: ./backend
     container_name: a2a-hub-api
+    network_mode: host
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${API_HOST_PORT:-1880}", "--ssl-keyfile", "/etc/letsencrypt/live/ai.hub.aimoo.com/privkey.pem", "--ssl-certfile", "/etc/letsencrypt/live/ai.hub.aimoo.com/fullchain.pem"]
     env_file:
-      - ./.env  # 同目录的 .env 文件
-    ports:
-      - "${API_HOST_PORT:-1880}:8000"
+      - ./.env
     environment:
       APP_ENV: ${APP_ENV:-dev}
       DEBUG: "${DEBUG:-true}"
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a_hub}:${POSTGRES_PASSWORD:-a2a_hub_password}@postgres:5432/${POSTGRES_DB:-a2a_hub}
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a}:${POSTGRES_PASSWORD:-A2aHub_b973792960e5d31f}@127.0.0.1:${POSTGRES_HOST_PORT:-5432}/${POSTGRES_DB:-a2a-hub}
+      REDIS_URL: redis://127.0.0.1:${REDIS_HOST_PORT:-1882}/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-prod}
       SERVICE_ACCOUNT_ISSUER_SECRET: ${SERVICE_ACCOUNT_ISSUER_SECRET:-dev-service-account-issuer-secret}
       SERVICE_ACCOUNT_TOKEN_EXPIRE_MINUTES: ${SERVICE_ACCOUNT_TOKEN_EXPIRE_MINUTES:-1440}
       A2A_HUB_PUBLIC_BASE_URL: ${A2A_HUB_PUBLIC_BASE_URL:-http://127.0.0.1:1880}
-      MQTT_BROKER_URL: mqtt://mosquitto:1883
+      MQTT_BROKER_URL: mqtt://127.0.0.1:${MQTT_HOST_PORT:-1883}
       MQTT_PUBLIC_BROKER_URL: ${MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}
       MQTT_TENANT_PASSWORD_SECRET: ${MQTT_TENANT_PASSWORD_SECRET:-dev-tenant-mqtt-secret-change-in-production}
       MQTT_AUTH_PASSWORDFILE: /app/runtime/mosquitto-auth/passwordfile
       MQTT_AUTH_ACLFILE: /app/runtime/mosquitto-auth/aclfile
       MQTT_AUTH_RELOAD_STAMP: /app/runtime/mosquitto-auth/reload.stamp
-    depends_on:
-      db-init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      mosquitto:
-        condition: service_started
     volumes:
-      - ./backend/app:/app/app   # 开发热重载
+      - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini:ro
       - ./backend/openclaw-aimoo-plugin:/app/openclaw-aimoo-plugin:ro
       - ./deploy/mosquitto:/app/runtime/mosquitto-auth
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
   db-init:
     build: ./backend
     container_name: a2a-hub-db-init
+    network_mode: host
     restart: "no"
     env_file:
-      - ./.env  # 同目录的 .env 文件
+      - ./.env
     command: ["python", "scripts/init_db.py"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a_hub}:${POSTGRES_PASSWORD:-a2a_hub_password}@postgres:5432/${POSTGRES_DB:-a2a_hub}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-a2a}:${POSTGRES_PASSWORD:-A2aHub_b973792960e5d31f}@127.0.0.1:${POSTGRES_HOST_PORT:-5432}/${POSTGRES_DB:-a2a-hub}
       DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-tenant_001}
       DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-默认租户}
     volumes:
@@ -56,32 +51,13 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini:ro
 
-#  postgres:
-#    image: postgres:16-alpine
-#    container_name: a2a-hub-postgres
-#    env_file:
-#      - ./.env  # 同目录的 .env 文件
-#    ports:
-#      - "${POSTGRES_HOST_PORT:-1881}:5432"
-#    environment:
-#      POSTGRES_DB: ${POSTGRES_DB:-a2a_hub}
-#      POSTGRES_USER: ${POSTGRES_USER:-a2a_hub}
-#      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-a2a_hub_password}
-#    healthcheck:
-#      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-a2a_hub} -d ${POSTGRES_DB:-a2a_hub}"]
-#      interval: 5s
-#      timeout: 5s
-#      retries: 20
-#    volumes:
-#      - postgres-data:/var/lib/postgresql/data
-
   redis:
     image: redis:7-alpine
     container_name: a2a-hub-redis
-    ports:
-      - "${REDIS_HOST_PORT:-1882}:6379"
+    network_mode: host
+    command: ["redis-server", "--port", "${REDIS_HOST_PORT:-1882}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "${REDIS_HOST_PORT:-1882}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -89,9 +65,8 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: a2a-hub-mosquitto
+    network_mode: host
     command: ["/bin/sh", "/mosquitto/config-live/run-with-reload.sh"]
-    ports:
-      - "${MQTT_HOST_PORT:-1883}:1883"
     volumes:
       - ./deploy/mosquitto:/mosquitto/config-live
       - mosquitto-data:/mosquitto/data
