@@ -184,6 +184,8 @@ class AgentLinkSelfRegisterRequest(BaseModel):
     capabilities: dict[str, Any] = Field(default_factory=dict)
     config_json: dict[str, Any] = Field(default_factory=dict)
     owner_profile: dict[str, Any] = Field(default_factory=dict)
+    dispatch_channel: str | None = None  # mqtt / webhook / telegram_bot
+    dispatch_config: dict[str, Any] | None = None  # webhook_url / bot_token + chat_id
 
 
 class AgentLinkManifestResponse(BaseModel):

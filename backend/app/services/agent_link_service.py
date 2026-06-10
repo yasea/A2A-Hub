@@ -8,12 +8,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.redis_client import get_redis
 from app.core.security import create_access_token
+from app.models.agent import Agent
 from app.models.task import Task
+from app.services.dispatcher import (
+    dispatch_via_channel,
+    get_agent_dispatch_channel,
+)
 from app.services.error_event_service import ErrorEventService
 from app.services.mqtt_auth import tenant_mqtt_password, tenant_mqtt_username
 
@@ -139,7 +145,7 @@ class AgentLinkService:
             },
         )
 
-    async def dispatch_task(self, task: Task, auth_token: str) -> AgentLinkDispatchResult:
+    async def dispatch_task(self, task: Task, auth_token: str, db: AsyncSession | None = None) -> AgentLinkDispatchResult:
         if not task.target_agent_id:
             return AgentLinkDispatchResult(dispatched=False, transport=settings.AGENT_LINK_TRANSPORT, reason="missing_target_agent")
 
@@ -155,6 +161,47 @@ class AgentLinkService:
             "metadata": task.metadata_json,
             "trace_id": task.trace_id,
         }
+
+        # 检查 Agent 的 dispatch_channel（非 mqtt 时走 dispatcher）
+        if db is not None:
+            result = await self.db.execute(
+                select(Agent).where(
+                    Agent.agent_id == task.target_agent_id,
+                    Agent.tenant_id == task.tenant_id,
+                )
+            )
+            agent = result.scalar_one_or_none()
+            if agent:
+                channel = get_agent_dispatch_channel(agent)
+                if channel != "mqtt":
+                    ok, used_channel = await dispatch_via_channel(agent, payload)
+                    if ok:
+                        return AgentLinkDispatchResult(
+                            dispatched=True,
+                            transport=used_channel,
+                            reason=f"dispatched_via_{used_channel}",
+                            topic=topic,
+                        )
+                    # 非 mqtt 通道投递失败，进 pending 队列
+                    await ErrorEventService.record_out_of_band(
+                        source_side="platform",
+                        stage="dispatch",
+                        category=used_channel,
+                        summary=f"{used_channel} 下发失败，任务已进入 pending 队列",
+                        tenant_id=task.tenant_id,
+                        agent_id=task.target_agent_id,
+                        detail=f"{used_channel} dispatch failed",
+                        payload={"task_id": task.task_id},
+                    )
+                    await self._push_pending(task.tenant_id, task.target_agent_id, payload)
+                    return AgentLinkDispatchResult(
+                        dispatched=False,
+                        transport=used_channel,
+                        reason=f"{used_channel}_dispatch_failed",
+                        topic=topic,
+                    )
+
+        # 原有 MQTT 投递逻辑
         published = False
         if settings.AGENT_LINK_TRANSPORT == "mqtt":
             published = await self.publisher.publish(
