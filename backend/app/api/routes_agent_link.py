@@ -960,7 +960,7 @@ def _agent_link_prompt_text(request: Request) -> str:
 1. 打开接入说明：{urls["public_connect_url"]}
 2. 确认本机 OpenClaw 短 agent id。按以下方法自行判断，不要问主人：
    - 先调用 `session_status`，读取当前会话 `sessionKey`；`sessionKey` 形如 `agent:mia:main` 时，本机短 agent id 是第二段 `mia`
-   - 如果不能调用 `session_status`，再检查当前工作目录（pwd）：若路径包含 workspace-{name}（如 workspace-mia），则你的 agent id 是 {name}
+   - 如果不能调用 `session_status`，再检查当前工作目录（pwd）：若路径包含 workspace-{{name}}（如 workspace-mia），则你的 agent id 是 {{name}}
    - 若 pwd 刚好是 workspace（无后缀），则 agent id 是 main
    - 若以上都不匹配，读取 ~/.openclaw/openclaw.json 中 agents.list、workspace 字段和 channels.aimoo.instances；default:true 只能作为最后兜底，不要优先猜它
    - 也可执行 `ls ~/.openclaw/workspace-*` 列出所有 workspace 辅助判断

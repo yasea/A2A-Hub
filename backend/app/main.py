@@ -2,6 +2,7 @@
 A2A Hub — FastAPI 应用入口
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -51,6 +52,8 @@ app = FastAPI(
 在右上角 **Authorize** 按钮中填入：`Bearer <token>`
 
 [查看错误记录](/docs/errors)
+
+[项目说明（管理/业务读者）](/docs/readme)
 
 """,
     lifespan=lifespan,
@@ -288,6 +291,7 @@ async def custom_swagger_docs():
   <button id="copy-agent-onboarding">复制给 Agent 的完整指令</button>
   <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
   <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
+  <a class="secondary" href="/docs/readme" target="_blank">管理/运营说明</a>
   <a class="secondary" id="agent-error-link" href="/docs/errors" target="_blank">错误记录过滤</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
@@ -684,6 +688,16 @@ async def docs_error_records_page(agent_id: str | None = None):
 </body>
 </html>
 """
+    return HTMLResponse(html)
+
+
+_DOCS_README_HTML_PATH = Path(__file__).resolve().parent / "static" / "docs_readme.html"
+
+
+@app.get("/docs/readme", include_in_schema=False)
+async def docs_readme_page():
+    """管理/业务向项目说明：价值、协议、架构与产品规则（非接入排障页）。"""
+    html = _DOCS_README_HTML_PATH.read_text(encoding="utf-8")
     return HTMLResponse(html)
 
 
