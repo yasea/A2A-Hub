@@ -907,6 +907,8 @@ async def docs_services_page():
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text })
         });
+        // 继续轮询等待回复
+        startPolling(currentThreadId, currentTenantId);
       } catch (err) {
         list.innerHTML += `<div class="empty" style="color:#ef4444;">发送失败: ${err.message}</div>`;
         document.getElementById('chat-input').disabled = false;
