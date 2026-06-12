@@ -284,16 +284,14 @@ async def custom_swagger_docs():
   }
 </style>
 <div id="agent-onboarding-card">
-  <strong>OpenClaw Agent 接入指令：</strong>
-  如果要让本机或内网里的 OpenClaw agent 自己完成注册、安装插件、配置 MQTT 长连接，请不要只丢一个裸 URL。
-  直接复制 <code>/agent-link/prompt</code> 的完整任务给 agent；它会按步骤安装，重启后继续检查，并把安装结果回报给主人。
-  <br>
-  <button id="copy-agent-onboarding">复制给 Agent 的完整指令</button>
-  <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
-  <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
-  <a class="secondary" href="/docs/readme" target="_blank">管理/运营说明</a>
-  <a class="secondary" href="/docs/services" target="_blank">服务管理</a>
-  <a class="secondary" id="agent-error-link" href="/docs/errors" target="_blank">错误记录过滤</a>
+  <strong>🔗 OpenClaw Agent 接入</strong> &nbsp;·&nbsp;
+  让本机 agent 自己完成注册和 MQTT 连接：
+  <button id="copy-agent-onboarding">📋 复制完整指令</button>
+  <a class="secondary" href="/agent-link/prompt" target="_blank">📄 指令文本</a>
+  <a class="secondary" href="/agent-link/connect" target="_blank">⚙️ Runbook</a>
+  &nbsp;|&nbsp;
+  <a class="secondary" href="/docs/services" target="_blank">🛠️ 服务管理</a>
+  <a class="secondary" href="/docs/errors" target="_blank">⚠️ 错误记录</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
 <div id="agent-test-panel">
