@@ -891,8 +891,11 @@ async def docs_services_page():
       if (!text) return;
       input.value = '';
 
+      // 先添加到本地历史
+      allMessages.push({ role: 'user', content_text: text, created_at: new Date().toISOString() });
+      renderMessages(allMessages);
+
       const list = document.getElementById('message-list');
-      list.innerHTML += `<div class="message user"><div>${escapeHtml(text)}</div></div>`;
       list.scrollTop = list.scrollHeight;
       document.getElementById('chat-input').disabled = true;
       document.getElementById('chat-send-btn').disabled = true;
