@@ -956,7 +956,7 @@ async def docs_services_page():
       }
       list.innerHTML = messages.map(m => `
         <div class="message ${m.role}">
-          <div>${renderMarkdown(m.content_text || '')}</div>
+          <div>${textToHtml(m.content_text || '')}</div>
           <div class="time">${m.created_at || ''}</div>
         </div>
       `).join('');
@@ -982,13 +982,11 @@ async def docs_services_page():
       return div.innerHTML;
     }
 
-    // 简单的 Markdown 渲染
-    function renderMarkdown(text) {
+    // 文本转 HTML
+    function textToHtml(text) {
       if (!text) return '';
       let html = escapeHtml(text);
-      // 换行
-      html = html.split('\n').join('<br>');
-      return html;
+      return html.split('\\n').join('<br>');
     }
 
     // 点击弹窗背景关闭
