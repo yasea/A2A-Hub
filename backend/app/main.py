@@ -991,8 +991,8 @@ async def docs_services_page():
       html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       // 代码 `code` -> <code>code</code>
       html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-      // 换行
-      html = html.replace(/\n/g, '<br>');
+      // 换行用 br 替换
+      html = html.split('\n').join('<br>');
       return html;
     }
 
