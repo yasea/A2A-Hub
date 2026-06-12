@@ -867,31 +867,21 @@ async def docs_services_page():
       document.getElementById('chat-modal-title').textContent = '💬 ' + title;
       document.getElementById('chat-service-id').value = serviceId;
       document.getElementById('chat-tenant-id').value = tenantId;
-      document.getElementById('message-list').innerHTML = '<div class="loading">创建会话...</div>';
+      document.getElementById('message-list').innerHTML = '<div class="empty">请输入消息开始对话...</div>';
+      document.getElementById('chat-thinking').style.display = 'none';
+      document.getElementById('chat-input').disabled = false;
+      document.getElementById('chat-send-btn').disabled = false;
+      document.getElementById('chat-input').value = '';
+      currentThreadId = null;
+      currentTenantId = tenantId;
       openModal('chat-modal');
-
-      try {
-        const result = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: '请只回复：SERVICE_TEST_OK' })
-        });
-        currentThreadId = result.thread_id;
-        currentTenantId = tenantId;
-        document.getElementById('chat-input').disabled = true;
-        document.getElementById('chat-send-btn').disabled = true;
-        document.getElementById('chat-thinking').style.display = 'block';
-        document.getElementById('message-list').innerHTML = '<div class="loading">💬 Kavip 正在思考...</div>';
-        startPolling(result.thread_id, tenantId);
-      } catch (err) {
-        document.getElementById('message-list').innerHTML = `<div class="empty" style="color:#ef4444;">创建会话失败: ${err.message}</div>`;
-      }
+      document.getElementById('chat-input').focus();
     }
 
     async function sendMessage() {
       const input = document.getElementById('chat-input');
       const text = input.value.trim();
-      if (!text || !currentThreadId) return;
+      if (!text) return;
       input.value = '';
 
       const list = document.getElementById('message-list');
@@ -901,12 +891,17 @@ async def docs_services_page():
       document.getElementById('chat-send-btn').disabled = true;
       document.getElementById('chat-thinking').style.display = 'block';
 
+      const serviceId = document.getElementById('chat-service-id').value;
+      const tenantId = document.getElementById('chat-tenant-id').value || currentTenantId;
+
       try {
-        await api(`/v1/docs-test/services/${encodeURIComponent(document.getElementById('chat-service-id').value)}/send`, {
+        const result = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text })
         });
+        currentThreadId = result.thread_id;
+        currentTenantId = tenantId;
         // 继续轮询等待回复
         startPolling(currentThreadId, currentTenantId);
       } catch (err) {
