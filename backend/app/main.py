@@ -107,7 +107,7 @@ async def custom_swagger_docs():
     right: var(--agent-test-panel-gap);
     bottom: var(--agent-test-panel-gap);
     z-index: 900;
-    width: min(380px, calc(100vw - (var(--agent-test-panel-gap) * 2)));
+    width: min(400px, calc(100vw - (var(--agent-test-panel-gap) * 2)));
     overflow: auto;
     background: #111827;
     color: #f9fafb;
@@ -312,7 +312,7 @@ async def custom_swagger_docs():
     <textarea id="agent-test-message" rows="3">请只回复：DOCS_AGENT_TEST_OK</textarea>
     <div class="button-row">
       <button id="agent-test-send">以平台名义发送并等待结果</button>
-      <button id="agent-test-send-as-agent">以选中 Agent 身份发送（admin 模拟）</button>
+      <button id="agent-test-send-as-agent">以选中 Agent 身份发送</button>
     </div>
     <div class="hint">该窗口调用 <code>docs-test</code> 内部联调接口，自动创建 context、发送消息、轮询 task 和展示 assistant 回复。</div>
     <pre id="agent-test-output">等待操作...</pre>
@@ -754,10 +754,14 @@ async def docs_services_page():
 
   <!-- 服务对话弹窗 -->
   <div id="chat-modal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" id="chat-modal-content">
       <div class="modal-header">
         <span class="modal-title" id="chat-modal-title">服务对话</span>
         <button class="modal-close" onclick="closeModal('chat-modal')">&times;</button>
+      </div>
+      <div id="chat-loading-overlay" style="display:none;position:absolute;inset:0;background:rgba(15,23,42,0.85);border-radius:16px;z-index:10;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
+        <div style="font-size:24px;">⏳</div>
+        <div style="color:#94a3b8;">Kavip 正在回复中...</div>
       </div>
       <input type="hidden" id="chat-service-id">
       <input type="hidden" id="chat-tenant-id">
@@ -766,7 +770,7 @@ async def docs_services_page():
       </div>
       <div style="display:flex;gap:8px;">
         <textarea id="chat-input" placeholder="输入消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
-        <button class="btn btn-primary" onclick="sendMessage()" style="height:76px;white-space:nowrap;">发送</button>
+        <button class="btn btn-primary" id="chat-send-btn" onclick="sendMessage()" style="height:76px;white-space:nowrap;">发送</button>
       </div>
     </div>
   </div>
@@ -877,6 +881,8 @@ async def docs_services_page():
         currentThreadId = result.thread_id;
         currentTenantId = tenantId;
         document.getElementById('chat-input').disabled = true;
+        document.getElementById('chat-send-btn').disabled = true;
+        document.getElementById('chat-loading-overlay').style.display = 'flex';
         document.getElementById('message-list').innerHTML = '<div class="loading">💬 Kavip 正在思考...</div>';
         startPolling(result.thread_id, tenantId);
       } catch (err) {
@@ -894,6 +900,8 @@ async def docs_services_page():
       list.innerHTML += `<div class="message user"><div>${escapeHtml(text)}</div></div>`;
       list.scrollTop = list.scrollHeight;
       document.getElementById('chat-input').disabled = true;
+      document.getElementById('chat-send-btn').disabled = true;
+      document.getElementById('chat-loading-overlay').style.display = 'flex';
 
       try {
         await api(`/v1/docs-test/services/${encodeURIComponent(document.getElementById('chat-service-id').value)}/send`, {
@@ -903,6 +911,9 @@ async def docs_services_page():
         });
       } catch (err) {
         list.innerHTML += `<div class="empty" style="color:#ef4444;">发送失败: ${err.message}</div>`;
+        document.getElementById('chat-input').disabled = false;
+        document.getElementById('chat-send-btn').disabled = false;
+        document.getElementById('chat-loading-overlay').style.display = 'none';
       }
     }
 
@@ -917,6 +928,8 @@ async def docs_services_page():
             clearInterval(pollTimer);
             pollTimer = null;
             document.getElementById('chat-input').disabled = false;
+            document.getElementById('chat-send-btn').disabled = false;
+            document.getElementById('chat-loading-overlay').style.display = 'none';
           }
         } catch (_) {}
       }, 2000);
@@ -938,12 +951,12 @@ async def docs_services_page():
     }
 
     async function loadServiceThreads(serviceId) {
-      alert('会话列表: 请在控制台查看或实现');
       try {
         const threads = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/threads`);
-        console.log('Threads:', threads);
+        return threads;
       } catch (err) {
-        console.error(err);
+        console.error('加载会话失败:', err);
+        return [];
       }
     }
 
