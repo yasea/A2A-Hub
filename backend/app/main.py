@@ -775,6 +775,7 @@ async def docs_services_page():
     const API_BASE = '';
     let currentServiceId = null;
     let currentThreadId = null;
+    let currentTenantId = null;
     let pollTimer = null;
 
     // 调试日志
@@ -874,7 +875,9 @@ async def docs_services_page():
           body: JSON.stringify({ message: '请只回复：SERVICE_TEST_OK' })
         });
         currentThreadId = result.thread_id;
-        document.getElementById('message-list').innerHTML = '<div class="empty">等待回复...</div>';
+        currentTenantId = tenantId;
+        document.getElementById('chat-input').disabled = true;
+        document.getElementById('message-list').innerHTML = '<div class="loading">💬 Kavip 正在思考...</div>';
         startPolling(result.thread_id, tenantId);
       } catch (err) {
         document.getElementById('message-list').innerHTML = `<div class="empty" style="color:#ef4444;">创建会话失败: ${err.message}</div>`;
@@ -890,6 +893,7 @@ async def docs_services_page():
       const list = document.getElementById('message-list');
       list.innerHTML += `<div class="message user"><div>${escapeHtml(text)}</div></div>`;
       list.scrollTop = list.scrollHeight;
+      document.getElementById('chat-input').disabled = true;
 
       try {
         await api(`/v1/docs-test/services/${encodeURIComponent(document.getElementById('chat-service-id').value)}/send`, {
@@ -912,6 +916,7 @@ async def docs_services_page():
           if (assistant) {
             clearInterval(pollTimer);
             pollTimer = null;
+            document.getElementById('chat-input').disabled = false;
           }
         } catch (_) {}
       }, 2000);
@@ -920,7 +925,7 @@ async def docs_services_page():
     function renderMessages(messages) {
       const list = document.getElementById('message-list');
       if (!messages.length) {
-        list.innerHTML = '<div class="empty">暂无消息</div>';
+        list.innerHTML = '<div class="loading">等待回复...</div>';
         return;
       }
       list.innerHTML = messages.map(m => `
