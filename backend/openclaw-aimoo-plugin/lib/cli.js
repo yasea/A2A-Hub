@@ -4,7 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { resolvePluginInstances } = require("./config");
-const { helperSource } = require("./agent-link-core/local-control");
+
+// Path to the CLI bridge script (same directory as this file)
+const CLI_BRIDGE_PATH = path.resolve(__dirname, "cli-bridge.js");
 
 function normalizeAgentId(value) {
   if (typeof value !== "string") return "";
@@ -65,20 +67,21 @@ function buildRunnerEnv(target) {
 
 function runCommand(target, argv) {
   ensureHelperExists(target);
-  execFileSync(process.execPath, ["-e", helperSource(), "_", ...argv], {
+  const configJson = JSON.stringify({
+    connectUrl: target.config.connectUrl,
+    agentId: target.platformAgentId || target.config.agentId,
+    localAgentId: target.localAgentId,
+    userProfileFile: target.config.userProfileFile,
+    stateFile: target.config.stateFile,
+    runtimeIdentityKey: target.config.runtimeIdentityKey,
+    runtimeIdentityKeyFile: target.config.runtimeIdentityKeyFile,
+    httpTimeoutMs: target.config.httpTimeoutMs || 15000,
+  });
+  execFileSync(process.execPath, [CLI_BRIDGE_PATH, ...argv], {
     stdio: "inherit",
     env: {
       ...buildRunnerEnv(target),
-      AIMOO_LINK_CLI_CONFIG_JSON: JSON.stringify({
-        connectUrl: target.config.connectUrl,
-        agentId: target.platformAgentId || target.config.agentId,
-        localAgentId: target.localAgentId,
-        userProfileFile: target.config.userProfileFile,
-        stateFile: target.config.stateFile,
-        runtimeIdentityKey: target.config.runtimeIdentityKey,
-        runtimeIdentityKeyFile: target.config.runtimeIdentityKeyFile,
-        httpTimeoutMs: target.config.httpTimeoutMs || 15000,
-      }),
+      AIMOO_LINK_CLI_CONFIG_JSON: configJson,
     },
   });
 }
