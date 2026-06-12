@@ -916,20 +916,34 @@ async def docs_services_page():
     }
 
     function startPolling(threadId, tenantId) {
+      let pollCount = 0;
       if (pollTimer) clearInterval(pollTimer);
+      console.log('[Polling] 开始轮询, threadId:', threadId);
       pollTimer = setInterval(async () => {
+        pollCount++;
         try {
           const messages = await api(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
+          console.log('[Polling] 第', pollCount, '次, 消息数:', messages.length);
           renderMessages(messages);
-          const assistant = messages.find(m => m.role === 'assistant');
+          const assistant = messages.find(m => m.role === 'assistant' && m.content_text && m.content_text.trim());
           if (assistant) {
+            console.log('[Polling] 收到回复:', assistant.content_text);
             clearInterval(pollTimer);
             pollTimer = null;
             document.getElementById('chat-input').disabled = false;
             document.getElementById('chat-send-btn').disabled = false;
             document.getElementById('chat-thinking').style.display = 'none';
           }
-        } catch (_) {}
+          if (pollCount > 60) {
+            console.log('[Polling] 超时，停止轮询');
+            clearInterval(pollTimer);
+            pollTimer = null;
+            document.getElementById('chat-thinking').style.display = 'none';
+            renderMessages(messages);
+          }
+        } catch (err) {
+          console.error('[Polling] 轮询错误:', err);
+        }
       }, 2000);
     }
 
