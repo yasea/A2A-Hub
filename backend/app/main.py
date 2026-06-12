@@ -727,6 +727,425 @@ async def custom_swagger_docs():
     return HTMLResponse(html)
 
 
+@app.get("/docs/services", include_in_schema=False)
+async def docs_services_page():
+    """服务展示与服务对话测试页面。"""
+    html = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A2A Hub 服务管理</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 24px; margin-bottom: 20px; color: #fff; }
+    h2 { font-size: 16px; margin: 20px 0 12px; color: #e2e8f0; }
+    .nav { margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .nav a {
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      color: #94a3b8;
+      border: 1px solid #334155;
+      transition: all 0.2s;
+    }
+    .nav a:hover { background: #1e293b; color: #f1f5f9; }
+    .nav a.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .card-title { font-size: 16px; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .service-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px;
+      transition: all 0.2s;
+    }
+    .service-card:hover { border-color: #3b82f6; }
+    .service-card .title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .service-card .meta { font-size: 12px; color: #64748b; margin-bottom: 8px; }
+    .service-card .summary { font-size: 13px; color: #94a3b8; margin-bottom: 12px; }
+    .service-card .online { color: #22c55e; }
+    .service-card .offline { color: #ef4444; }
+    .service-card .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .service-card .tag {
+      background: #1e293b;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .service-card .actions { display: flex; gap: 8px; }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-outline { background: transparent; border: 1px solid #475569; color: #e2e8f0; }
+    .btn-outline:hover { background: #334155; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    input, select, textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #f1f5f9;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    pre {
+      background: #020617;
+      border-radius: 8px;
+      padding: 12px;
+      overflow: auto;
+      font: 12px/1.5 ui-monospace, monospace;
+      color: #d1fae5;
+      max-height: 300px;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal.active { display: flex; }
+    .modal-content {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow: auto;
+      padding: 24px;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .modal-title { font-size: 18px; font-weight: 600; }
+    .modal-close { background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer; }
+    .message-list { max-height: 400px; overflow: auto; margin-bottom: 16px; }
+    .message {
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+    .message.user { background: #1e40af; margin-left: 20px; }
+    .message.assistant { background: #166534; margin-right: 20px; }
+    .message .time { font-size: 10px; opacity: 0.7; margin-top: 4px; }
+    .empty { text-align: center; padding: 40px; color: #64748b; }
+    .loading { text-align: center; padding: 20px; color: #64748b; }
+    @media (max-width: 600px) {
+      .form-row { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🛠️ A2A Hub 服务管理</h1>
+    <div class="nav">
+      <a href="/docs" class="">API 文档</a>
+      <a href="/docs/services" class="active">服务管理</a>
+      <a href="/docs/errors">错误记录</a>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📦 已注册服务</span>
+        <button class="btn btn-primary btn-sm" onclick="showPublishModal()">+ 发布服务</button>
+      </div>
+      <div id="service-list" class="grid">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 发布服务弹窗 -->
+  <div id="publish-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">发布新服务</span>
+        <button class="modal-close" onclick="closeModal('publish-modal')">&times;</button>
+      </div>
+      <div class="form-row">
+        <div>
+          <label>Handler Agent ID</label>
+          <input id="pub-handler-agent-id" placeholder="openclaw:xxx:agent-name">
+        </div>
+        <div>
+          <label>服务标题</label>
+          <input id="pub-title" placeholder="服务名称">
+        </div>
+      </div>
+      <div>
+        <label>服务描述</label>
+        <textarea id="pub-summary" placeholder="简要描述服务功能"></textarea>
+      </div>
+      <div class="form-row">
+        <div>
+          <label>可见性</label>
+          <select id="pub-visibility">
+            <option value="listed">公开 (listed)</option>
+            <option value="unlisted">不公开 (unlisted)</option>
+          </select>
+        </div>
+        <div>
+          <label>标签 (逗号分隔)</label>
+          <input id="pub-tags" placeholder="充值, 客服">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="publishService()" style="width:100%;">发布服务</button>
+      <pre id="publish-result" style="margin-top:12px;display:none;"></pre>
+    </div>
+  </div>
+
+  <!-- 服务对话弹窗 -->
+  <div id="chat-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title" id="chat-modal-title">服务对话</span>
+        <button class="modal-close" onclick="closeModal('chat-modal')">&times;</button>
+      </div>
+      <input type="hidden" id="chat-service-id">
+      <input type="hidden" id="chat-tenant-id">
+      <div id="message-list" class="message-list">
+        <div class="empty">开始对话...</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <textarea id="chat-input" placeholder="输入消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+        <button class="btn btn-primary" onclick="sendMessage()" style="height:76px;white-space:nowrap;">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    let currentServiceId = null;
+    let currentThreadId = null;
+    let pollTimer = null;
+
+    async function api(path, options = {}) {
+      const resp = await fetch(API_BASE + path, options);
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_) { data = { error: text }; }
+      if (!resp.ok || data.error) throw new Error(JSON.stringify(data.error || data, null, 2));
+      return data.data;
+    }
+
+    async function loadServices() {
+      const list = document.getElementById('service-list');
+      try {
+        const services = await api('/v1/docs-test/services');
+        if (!services.length) {
+          list.innerHTML = '<div class="empty">暂无注册服务</div>';
+          return;
+        }
+        list.innerHTML = services.map(s => \`
+          <div class="service-card">
+            <div class="title">\${s.title}</div>
+            <div class="meta">
+              <span class="\${s.handler_online ? 'online' : 'offline'}">● \${s.handler_online ? '在线' : '离线'}</span>
+              &nbsp;|&nbsp;
+              <span>\${s.visibility}</span>
+              &nbsp;|&nbsp;
+              <span>\${s.status}</span>
+            </div>
+            <div class="summary">\${s.summary || '无描述'}</div>
+            <div class="tags">
+              \${(s.tags || []).map(t => \`<span class="tag">\${t}</span>\`).join('')}
+            </div>
+            <div class="actions">
+              <button class="btn btn-primary btn-sm" onclick="openChat('\${s.service_id}', '\${s.tenant_id}', '\${s.title}')">💬 对话</button>
+              <button class="btn btn-outline btn-sm" onclick="loadServiceThreads('\${s.service_id}')">📋 会话</button>
+            </div>
+          </div>
+        \`).join('');
+      } catch (err) {
+        list.innerHTML = \`<div class="empty" style="color:#ef4444;">加载失败: \${err.message}</div>\`;
+      }
+    }
+
+    async function publishService() {
+      const handlerAgentId = document.getElementById('pub-handler-agent-id').value.trim();
+      const title = document.getElementById('pub-title').value.trim();
+      const summary = document.getElementById('pub-summary').value.trim();
+      const visibility = document.getElementById('pub-visibility').value;
+      const tags = document.getElementById('pub-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+      const result = document.getElementById('publish-result');
+
+      if (!handlerAgentId || !title) {
+        result.style.display = 'block';
+        result.textContent = '请填写必填项';
+        return;
+      }
+
+      try {
+        result.style.display = 'block';
+        result.textContent = '发布中...';
+        const svc = await api('/v1/docs-test/services', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ handler_agent_id: handlerAgentId, title, summary, visibility, tags })
+        });
+        result.textContent = JSON.stringify({ success: true, service_id: svc.service_id }, null, 2);
+        setTimeout(() => { closeModal('publish-modal'); loadServices(); }, 1500);
+      } catch (err) {
+        result.style.display = 'block';
+        result.textContent = '发布失败: ' + err.message;
+      }
+    }
+
+    async function openChat(serviceId, tenantId, title) {
+      document.getElementById('chat-modal-title').textContent = '💬 ' + title;
+      document.getElementById('chat-service-id').value = serviceId;
+      document.getElementById('chat-tenant-id').value = tenantId;
+      document.getElementById('message-list').innerHTML = '<div class="loading">创建会话...</div>';
+      openModal('chat-modal');
+
+      try {
+        const result = await api(\`/v1/docs-test/services/\${encodeURIComponent(serviceId)}/send\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: '请只回复：SERVICE_TEST_OK' })
+        });
+        currentThreadId = result.thread_id;
+        document.getElementById('message-list').innerHTML = '<div class="empty">等待回复...</div>';
+        startPolling(result.thread_id, tenantId);
+      } catch (err) {
+        document.getElementById('message-list').innerHTML = \`<div class="empty" style="color:#ef4444;">创建会话失败: \${err.message}</div>\`;
+      }
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text || !currentThreadId) return;
+      input.value = '';
+
+      const list = document.getElementById('message-list');
+      list.innerHTML += \`<div class="message user"><div>\${escapeHtml(text)}</div></div>\`;
+      list.scrollTop = list.scrollHeight;
+
+      try {
+        await api(\`/v1/docs-test/services/\${encodeURIComponent(document.getElementById('chat-service-id').value)}/send\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+      } catch (err) {
+        list.innerHTML += \`<div class="empty" style="color:#ef4444;">发送失败: \${err.message}</div>\`;
+      }
+    }
+
+    function startPolling(threadId, tenantId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const messages = await api(\`/v1/docs-test/threads/\${encodeURIComponent(threadId)}/messages?tenant_id=\${encodeURIComponent(tenantId)}\`);
+          renderMessages(messages);
+          const assistant = messages.find(m => m.role === 'assistant');
+          if (assistant) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+        } catch (_) {}
+      }, 2000);
+    }
+
+    function renderMessages(messages) {
+      const list = document.getElementById('message-list');
+      if (!messages.length) {
+        list.innerHTML = '<div class="empty">暂无消息</div>';
+        return;
+      }
+      list.innerHTML = messages.map(m => \`
+        <div class="message \${m.role}">
+          <div>\${escapeHtml(m.content_text || '')}</div>
+          <div class="time">\${m.created_at || ''}</div>
+        </div>
+      \`).join('');
+      list.scrollTop = list.scrollHeight;
+    }
+
+    async function loadServiceThreads(serviceId) {
+      alert('会话列表: 请在控制台查看或实现');
+      try {
+        const threads = await api(\`/v1/docs-test/services/\${encodeURIComponent(serviceId)}/threads\`);
+        console.log('Threads:', threads);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function showPublishModal() { openModal('publish-modal'); }
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // 点击弹窗背景关闭
+    document.querySelectorAll('.modal').forEach(m => {
+      m.addEventListener('click', e => { if (e.target === m) m.classList.remove('active'); });
+    });
+
+    loadServices();
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
+
 @app.get("/docs/errors", include_in_schema=False)
 async def docs_error_records_page(agent_id: str | None = None):
     """Docs 错误记录查看页，支持按 agent_id 过滤。"""
