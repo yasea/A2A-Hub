@@ -777,7 +777,15 @@ async def docs_services_page():
     let currentThreadId = null;
     let pollTimer = null;
 
+    // 调试日志
+    console.log('[Service Page] 页面加载开始');
+    window.onerror = function(msg, url, line, col, err) {
+      console.error('[JS Error]', msg, 'at line', line, ':', err);
+      return false;
+    };
+
     async function api(path, options = {}) {
+      console.log('[API]', path);
       const resp = await fetch(API_BASE + path, options);
       const text = await resp.text();
       let data;
@@ -787,9 +795,12 @@ async def docs_services_page():
     }
 
     async function loadServices() {
+      console.log('[loadServices] 开始加载服务列表');
       const list = document.getElementById('service-list');
+      if (!list) { console.error('[loadServices] service-list 元素不存在'); return; }
       try {
         const services = await api('/v1/docs-test/services');
+        console.log('[loadServices] 获取到服务:', services);
         if (!services.length) {
           list.innerHTML = '<div class="empty">暂无注册服务</div>';
           return;
