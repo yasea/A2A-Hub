@@ -789,12 +789,17 @@ async def docs_services_page():
     };
 
     async function api(path, options = {}) {
-      console.log('[API]', path);
       const resp = await fetch(API_BASE + path, options);
       const text = await resp.text();
       let data;
-      try { data = JSON.parse(text); } catch (_) { data = { error: text }; }
-      if (!resp.ok || data.error) throw new Error(JSON.stringify(data.error || data, null, 2));
+      try { data = JSON.parse(text); } catch (_) {
+        throw new Error('响应不是 JSON: HTTP ' + resp.status);
+      }
+      if (!resp.ok) {
+        const msg = data.error?.message || data.error?.detail || JSON.stringify(data.error) || 'HTTP ' + resp.status;
+        throw new Error(msg);
+      }
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
       return data.data;
     }
 
@@ -951,7 +956,7 @@ async def docs_services_page():
       }
       list.innerHTML = messages.map(m => `
         <div class="message ${m.role}">
-          <div>${escapeHtml(m.content_text || '')}</div>
+          <div>${renderMarkdown(m.content_text || '')}</div>
           <div class="time">${m.created_at || ''}</div>
         </div>
       `).join('');
@@ -975,6 +980,22 @@ async def docs_services_page():
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    // 简单的 Markdown 渲染
+    function renderMarkdown(text) {
+      if (!text) return '';
+      // 转义 HTML
+      let html = escapeHtml(text);
+      // 粗体 **text** -> <strong>text</strong>
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // 斜体 *text* -> <em>text</em>
+      html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+      // 代码 `code` -> <code>code</code>
+      html = html.replace(/`(.+?)`/g, '<code>$1</code>');
+      // 换行
+      html = html.replace(/\n/g, '<br>');
+      return html;
     }
 
     // 点击弹窗背景关闭
