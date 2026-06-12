@@ -946,9 +946,8 @@ async def docs_services_page():
 
     function renderMessages(messages) {
       const list = document.getElementById('message-list');
-      if (!messages.length) {
-        list.innerHTML = '<div class="loading">等待回复...</div>';
-        return;
+      if (!messages || !messages.length) {
+        return; // 不清空历史消息
       }
       list.innerHTML = messages.map(m => `
         <div class="message ${m.role}">
