@@ -317,6 +317,34 @@ async def custom_swagger_docs():
     <pre id="agent-test-output">等待操作...</pre>
   </main>
 </div>
+<div id="service-test-panel">
+  <header>
+    <strong>Service 服务测试</strong>
+    <div class="toolbar">
+      <button id="service-test-toggle" class="ghost-btn" type="button" title="最小化服务面板" aria-label="最小化服务面板">−</button>
+    </div>
+  </header>
+  <main>
+    <label for="service-list-select">已注册服务</label>
+    <select id="service-list-select"><option>加载中...</option></select>
+    <label for="service-create-form">快速发布服务</label>
+    <div id="service-create-form" style="display:flex;gap:6px;margin:6px 0;">
+      <input id="svc-handler-agent-id" placeholder="handler_agent_id" style="flex:1;min-width:0;">
+      <input id="svc-title" placeholder="服务标题" style="flex:1;min-width:0;">
+      <button id="svc-publish-btn" style="margin:0;padding:8px 12px;">发布</button>
+    </div>
+    <label for="service-thread-select">服务会话 (Thread)</label>
+    <select id="service-thread-select"><option value="">先选择服务</option></select>
+    <label for="service-test-message">服务对话消息</label>
+    <textarea id="service-test-message" rows="3">请只回复：SERVICE_TEST_OK</textarea>
+    <div class="button-row">
+      <button id="service-test-send">发起服务对话</button>
+      <button id="service-thread-messages-btn">查看对话历史</button>
+    </div>
+    <div class="hint">通过 service thread 与服务 agent 对话，适合测试服务提供方。</div>
+    <pre id="service-test-output">等待操作...</pre>
+  </main>
+</div>
 <script>
 (function () {
   const panel = document.getElementById("agent-test-panel");
@@ -523,6 +551,172 @@ async def custom_swagger_docs():
  
 
   loadAgents();
+  loadServices();
+})();
+
+(function () {
+  // Service Test Panel
+  const servicePanel = document.getElementById("service-test-panel");
+  const serviceSelect = document.getElementById("service-list-select");
+  const serviceOutput = document.getElementById("service-test-output");
+  const serviceToggle = document.getElementById("service-test-toggle");
+  const threadSelect = document.getElementById("service-thread-select");
+  const svcCollapsedKey = "a2a-hub.docs.service-test-panel.collapsed";
+
+  function setServicePanelCollapsed(collapsed) {
+    if (!servicePanel || !serviceToggle) return;
+    servicePanel.classList.toggle("is-collapsed", collapsed);
+    serviceToggle.textContent = collapsed ? "+" : "−";
+    serviceToggle.title = collapsed ? "展开服务面板" : "最小化服务面板";
+    serviceToggle.setAttribute("aria-label", serviceToggle.title);
+    try { window.localStorage.setItem(svcCollapsedKey, collapsed ? "1" : "0"); } catch (_) {}
+  }
+
+  if (servicePanel && serviceToggle) {
+    let initial = false;
+    try { initial = window.localStorage.getItem(svcCollapsedKey) === "1"; } catch (_) {}
+    setServicePanelCollapsed(initial);
+    serviceToggle.addEventListener("click", () => {
+      setServicePanelCollapsed(!servicePanel.classList.contains("is-collapsed"));
+    });
+  }
+
+  function svcLog(value) {
+    serviceOutput.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+
+  async function svcApi(path, options) {
+    const resp = await fetch(path, options || {});
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch (_) { data = { error: text }; }
+    if (!resp.ok || data.error) {
+      throw new Error(JSON.stringify(data.error || data, null, 2));
+    }
+    return data.data;
+  }
+
+  async function loadServices() {
+    try {
+      const services = await svcApi("/v1/docs-test/services");
+      serviceSelect.innerHTML = "";
+      if (!services.length) {
+        serviceSelect.innerHTML = "<option value=''>没有已注册服务</option>";
+        return;
+      }
+      for (const svc of services) {
+        const opt = document.createElement("option");
+        opt.value = JSON.stringify({ service_id: svc.service_id, tenant_id: svc.tenant_id, handler_agent_id: svc.handler_agent_id });
+        opt.textContent = `${svc.handler_online ? "在线" : "离线"} | ${svc.title}`;
+        opt.title = `${svc.handler_agent_id} (${svc.visibility})`;
+        serviceSelect.appendChild(opt);
+      }
+      svcLog(`已加载 ${services.length} 个服务。`);
+      serviceSelect.addEventListener("change", loadServiceThreads);
+    } catch (err) {
+      svcLog("加载服务失败：\n" + err.message);
+    }
+  }
+
+  async function loadServiceThreads() {
+    threadSelect.innerHTML = '<option value="">加载中...</option>';
+    if (!serviceSelect.value) {
+      threadSelect.innerHTML = '<option value="">先选择服务</option>';
+      return;
+    }
+    try {
+      const selected = JSON.parse(serviceSelect.value);
+      const threads = await svcApi(`/v1/docs-test/services/${encodeURIComponent(selected.service_id)}/threads`);
+      threadSelect.innerHTML = '<option value="">新建对话</option>';
+      for (const t of threads) {
+        const opt = document.createElement("option");
+        opt.value = JSON.stringify({ thread_id: t.thread_id, service_id: t.service_id, tenant_id: selected.tenant_id });
+        opt.textContent = `${t.status} | ${t.thread_id} | ${t.created_at || ""}`;
+        opt.title = t.thread_id;
+        threadSelect.appendChild(opt);
+      }
+      if (!threads.length) threadSelect.innerHTML = '<option value="">无历史会话（将新建）</option>';
+    } catch (err) {
+      threadSelect.innerHTML = '<option value="">加载失败</option>';
+      svcLog("加载会话失败：" + err.message);
+    }
+  }
+
+  document.getElementById("svc-publish-btn").addEventListener("click", async () => {
+    const handlerAgentId = document.getElementById("svc-handler-agent-id").value.trim();
+    const title = document.getElementById("svc-title").value.trim();
+    if (!handlerAgentId || !title) {
+      svcLog("请填写 handler_agent_id 和服务标题");
+      return;
+    }
+    try {
+      const result = await svcApi("/v1/docs-test/services", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handler_agent_id: handlerAgentId, title: title, visibility: "listed" }),
+      });
+      svcLog({ published: result, status: "发布成功" });
+      loadServices();
+    } catch (err) {
+      svcLog("发布失败：\n" + err.message);
+    }
+  });
+
+  document.getElementById("service-test-send").addEventListener("click", async () => {
+    if (!serviceSelect.value) return;
+    const btn = document.getElementById("service-test-send");
+    btn.disabled = true;
+    try {
+      const selected = JSON.parse(serviceSelect.value);
+      const msg = document.getElementById("service-test-message").value || "请只回复：SERVICE_TEST_OK";
+      svcLog("正在发起服务对话...");
+      const result = await svcApi(`/v1/docs-test/services/${encodeURIComponent(selected.service_id)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+      svcLog({ sent: result, status: "已发送，开始轮询" });
+      await pollServiceTask(result.tenant_id, result.task_id, result.thread_id);
+    } catch (err) {
+      svcLog("发送失败：\n" + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("service-thread-messages-btn").addEventListener("click", async () => {
+    const selectedThread = threadSelect.value ? JSON.parse(threadSelect.value) : null;
+    if (!selectedThread) {
+      svcLog("请先选择一个会话");
+      return;
+    }
+    try {
+      const messages = await svcApi(`/v1/docs-test/threads/${encodeURIComponent(selectedThread.thread_id)}/messages?tenant_id=${encodeURIComponent(selectedThread.tenant_id)}`);
+      svcLog({ thread_id: selectedThread.thread_id, messages: messages });
+    } catch (err) {
+      svcLog("获取消息失败：\n" + err.message);
+    }
+  });
+
+  async function pollServiceTask(tenantId, taskId, threadId) {
+    for (let i = 1; i <= 90; i++) {
+      try {
+        const messages = await svcApi(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
+        const assistant = messages.filter((m) => m.role === "assistant").pop();
+        svcLog({
+          poll: i,
+          task_id: taskId,
+          thread_id: threadId,
+          assistant_reply: assistant && assistant.content_text,
+          last_message: messages[messages.length - 1],
+          messages_count: messages.length,
+        });
+        if (assistant) return;
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    svcLog("等待回复超时");
+  }
 })();
 </script>
 """
