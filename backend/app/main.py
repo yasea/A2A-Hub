@@ -292,6 +292,7 @@ async def custom_swagger_docs():
   <a class="secondary" href="/agent-link/prompt" target="_blank">打开指令文本</a>
   <a class="secondary" href="/agent-link/connect" target="_blank">打开 Agent Runbook</a>
   <a class="secondary" href="/docs/readme" target="_blank">管理/运营说明</a>
+  <a class="secondary" href="/docs/services" target="_blank">服务管理</a>
   <a class="secondary" id="agent-error-link" href="/docs/errors" target="_blank">错误记录过滤</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
