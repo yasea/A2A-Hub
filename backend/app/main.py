@@ -759,14 +759,13 @@ async def docs_services_page():
         <span class="modal-title" id="chat-modal-title">服务对话</span>
         <button class="modal-close" onclick="closeModal('chat-modal')">&times;</button>
       </div>
-      <div id="chat-loading-overlay" style="display:none;position:absolute;inset:0;background:rgba(15,23,42,0.85);border-radius:16px;z-index:10;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
-        <div style="font-size:24px;">⏳</div>
-        <div style="color:#94a3b8;">Kavip 正在回复中...</div>
-      </div>
       <input type="hidden" id="chat-service-id">
       <input type="hidden" id="chat-tenant-id">
       <div id="message-list" class="message-list">
         <div class="empty">开始对话...</div>
+      </div>
+      <div id="chat-thinking" style="display:none;padding:8px 12px;background:#1e293b;border-radius:8px;margin-bottom:8px;color:#94a3b8;font-size:13px;">
+        ⏳ Kavip 正在回复中...
       </div>
       <div style="display:flex;gap:8px;">
         <textarea id="chat-input" placeholder="输入消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
@@ -826,7 +825,6 @@ async def docs_services_page():
             </div>
             <div class="actions">
               <button class="btn btn-primary btn-sm" onclick="openChat('${s.service_id}', '${s.tenant_id}', '${s.title}')">💬 对话</button>
-              <button class="btn btn-outline btn-sm" onclick="loadServiceThreads('${s.service_id}')">📋 会话</button>
             </div>
           </div>
         `).join('');
@@ -882,7 +880,7 @@ async def docs_services_page():
         currentTenantId = tenantId;
         document.getElementById('chat-input').disabled = true;
         document.getElementById('chat-send-btn').disabled = true;
-        document.getElementById('chat-loading-overlay').style.display = 'flex';
+        document.getElementById('chat-thinking').style.display = 'block';
         document.getElementById('message-list').innerHTML = '<div class="loading">💬 Kavip 正在思考...</div>';
         startPolling(result.thread_id, tenantId);
       } catch (err) {
@@ -901,7 +899,7 @@ async def docs_services_page():
       list.scrollTop = list.scrollHeight;
       document.getElementById('chat-input').disabled = true;
       document.getElementById('chat-send-btn').disabled = true;
-      document.getElementById('chat-loading-overlay').style.display = 'flex';
+      document.getElementById('chat-thinking').style.display = 'block';
 
       try {
         await api(`/v1/docs-test/services/${encodeURIComponent(document.getElementById('chat-service-id').value)}/send`, {
@@ -913,7 +911,7 @@ async def docs_services_page():
         list.innerHTML += `<div class="empty" style="color:#ef4444;">发送失败: ${err.message}</div>`;
         document.getElementById('chat-input').disabled = false;
         document.getElementById('chat-send-btn').disabled = false;
-        document.getElementById('chat-loading-overlay').style.display = 'none';
+        document.getElementById('chat-thinking').style.display = 'none';
       }
     }
 
@@ -929,7 +927,7 @@ async def docs_services_page():
             pollTimer = null;
             document.getElementById('chat-input').disabled = false;
             document.getElementById('chat-send-btn').disabled = false;
-            document.getElementById('chat-loading-overlay').style.display = 'none';
+            document.getElementById('chat-thinking').style.display = 'none';
           }
         } catch (_) {}
       }, 2000);
