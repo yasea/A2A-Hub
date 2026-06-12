@@ -417,7 +417,7 @@ async def custom_swagger_docs():
       for (const agent of agents) {
         const option = document.createElement("option");
         option.value = JSON.stringify({ tenant_id: agent.tenant_id, agent_id: agent.agent_id });
-        option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.public_number || "无号码"}`;
+        option.textContent = `${agent.online ? "在线" : "离线"} | ${agent.public_number || ""} | ${agent.display_name || agent.agent_id.split(":").pop()}`;
         option.title = agent.agent_id;
         select.appendChild(option);
       } 
@@ -805,28 +805,28 @@ async def docs_services_page():
           list.innerHTML = '<div class="empty">暂无注册服务</div>';
           return;
         }
-        list.innerHTML = services.map(s => \`
+        list.innerHTML = services.map(s => `
           <div class="service-card">
-            <div class="title">\${s.title}</div>
+            <div class="title">${s.title}</div>
             <div class="meta">
-              <span class="\${s.handler_online ? 'online' : 'offline'}">● \${s.handler_online ? '在线' : '离线'}</span>
+              <span class="${s.handler_online ? 'online' : 'offline'}">● ${s.handler_online ? '在线' : '离线'}</span>
               &nbsp;|&nbsp;
-              <span>\${s.visibility}</span>
+              <span>${s.visibility}</span>
               &nbsp;|&nbsp;
-              <span>\${s.status}</span>
+              <span>${s.status}</span>
             </div>
-            <div class="summary">\${s.summary || '无描述'}</div>
+            <div class="summary">${s.summary || '无描述'}</div>
             <div class="tags">
-              \${(s.tags || []).map(t => \`<span class="tag">\${t}</span>\`).join('')}
+              ${(s.tags || []).map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
             <div class="actions">
-              <button class="btn btn-primary btn-sm" onclick="openChat('\${s.service_id}', '\${s.tenant_id}', '\${s.title}')">💬 对话</button>
-              <button class="btn btn-outline btn-sm" onclick="loadServiceThreads('\${s.service_id}')">📋 会话</button>
+              <button class="btn btn-primary btn-sm" onclick="openChat('${s.service_id}', '${s.tenant_id}', '${s.title}')">💬 对话</button>
+              <button class="btn btn-outline btn-sm" onclick="loadServiceThreads('${s.service_id}')">📋 会话</button>
             </div>
           </div>
-        \`).join('');
+        `).join('');
       } catch (err) {
-        list.innerHTML = \`<div class="empty" style="color:#ef4444;">加载失败: \${err.message}</div>\`;
+        list.innerHTML = `<div class="empty" style="color:#ef4444;">加载失败: ${err.message}</div>`;
       }
     }
 
@@ -868,7 +868,7 @@ async def docs_services_page():
       openModal('chat-modal');
 
       try {
-        const result = await api(\`/v1/docs-test/services/\${encodeURIComponent(serviceId)}/send\`, {
+        const result = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: '请只回复：SERVICE_TEST_OK' })
@@ -877,7 +877,7 @@ async def docs_services_page():
         document.getElementById('message-list').innerHTML = '<div class="empty">等待回复...</div>';
         startPolling(result.thread_id, tenantId);
       } catch (err) {
-        document.getElementById('message-list').innerHTML = \`<div class="empty" style="color:#ef4444;">创建会话失败: \${err.message}</div>\`;
+        document.getElementById('message-list').innerHTML = `<div class="empty" style="color:#ef4444;">创建会话失败: ${err.message}</div>`;
       }
     }
 
@@ -888,17 +888,17 @@ async def docs_services_page():
       input.value = '';
 
       const list = document.getElementById('message-list');
-      list.innerHTML += \`<div class="message user"><div>\${escapeHtml(text)}</div></div>\`;
+      list.innerHTML += `<div class="message user"><div>${escapeHtml(text)}</div></div>`;
       list.scrollTop = list.scrollHeight;
 
       try {
-        await api(\`/v1/docs-test/services/\${encodeURIComponent(document.getElementById('chat-service-id').value)}/send\`, {
+        await api(`/v1/docs-test/services/${encodeURIComponent(document.getElementById('chat-service-id').value)}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text })
         });
       } catch (err) {
-        list.innerHTML += \`<div class="empty" style="color:#ef4444;">发送失败: \${err.message}</div>\`;
+        list.innerHTML += `<div class="empty" style="color:#ef4444;">发送失败: ${err.message}</div>`;
       }
     }
 
@@ -906,7 +906,7 @@ async def docs_services_page():
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(async () => {
         try {
-          const messages = await api(\`/v1/docs-test/threads/\${encodeURIComponent(threadId)}/messages?tenant_id=\${encodeURIComponent(tenantId)}\`);
+          const messages = await api(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
           renderMessages(messages);
           const assistant = messages.find(m => m.role === 'assistant');
           if (assistant) {
@@ -923,19 +923,19 @@ async def docs_services_page():
         list.innerHTML = '<div class="empty">暂无消息</div>';
         return;
       }
-      list.innerHTML = messages.map(m => \`
-        <div class="message \${m.role}">
-          <div>\${escapeHtml(m.content_text || '')}</div>
-          <div class="time">\${m.created_at || ''}</div>
+      list.innerHTML = messages.map(m => `
+        <div class="message ${m.role}">
+          <div>${escapeHtml(m.content_text || '')}</div>
+          <div class="time">${m.created_at || ''}</div>
         </div>
-      \`).join('');
+      `).join('');
       list.scrollTop = list.scrollHeight;
     }
 
     async function loadServiceThreads(serviceId) {
       alert('会话列表: 请在控制台查看或实现');
       try {
-        const threads = await api(\`/v1/docs-test/services/\${encodeURIComponent(serviceId)}/threads\`);
+        const threads = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/threads`);
         console.log('Threads:', threads);
       } catch (err) {
         console.error(err);
