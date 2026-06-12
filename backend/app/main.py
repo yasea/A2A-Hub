@@ -989,8 +989,6 @@ async def docs_services_page():
       let html = escapeHtml(text);
       // 粗体 **text** -> <strong>text</strong>
       html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      // 斜体 *text* -> <em>text</em>
-      html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
       // 代码 `code` -> <code>code</code>
       html = html.replace(/`(.+?)`/g, '<code>$1</code>');
       // 换行
