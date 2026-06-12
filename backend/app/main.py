@@ -780,6 +780,7 @@ async def docs_services_page():
     let currentThreadId = null;
     let currentTenantId = null;
     let pollTimer = null;
+    let allMessages = [];
 
     // 调试日志
     console.log('[Service Page] 页面加载开始');
@@ -869,6 +870,7 @@ async def docs_services_page():
     }
 
     async function openChat(serviceId, tenantId, title) {
+      allMessages = [];
       document.getElementById('chat-modal-title').textContent = '💬 ' + title;
       document.getElementById('chat-service-id').value = serviceId;
       document.getElementById('chat-tenant-id').value = tenantId;
@@ -920,16 +922,16 @@ async def docs_services_page():
     function startPolling(threadId, tenantId) {
       let pollCount = 0;
       if (pollTimer) clearInterval(pollTimer);
-      console.log('[Polling] 开始轮询, threadId:', threadId);
       pollTimer = setInterval(async () => {
         pollCount++;
         try {
           const messages = await api(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
-          console.log('[Polling] 第', pollCount, '次, 消息数:', messages.length);
-          renderMessages(messages);
+          if (messages && messages.length > allMessages.length) {
+            allMessages = messages;
+            renderMessages(allMessages);
+          }
           const assistant = messages.find(m => m.role === 'assistant' && m.content_text && m.content_text.trim());
           if (assistant) {
-            console.log('[Polling] 收到回复:', assistant.content_text);
             clearInterval(pollTimer);
             pollTimer = null;
             document.getElementById('chat-input').disabled = false;
@@ -937,27 +939,32 @@ async def docs_services_page():
             document.getElementById('chat-thinking').style.display = 'none';
           }
           if (pollCount > 60) {
-            console.log('[Polling] 超时，停止轮询');
             clearInterval(pollTimer);
             pollTimer = null;
             document.getElementById('chat-thinking').style.display = 'none';
-            renderMessages(messages);
           }
         } catch (err) {
-          console.error('[Polling] 轮询错误:', err);
+          console.error('[Polling] 错误:', err);
         }
       }, 2000);
     }
 
+    function formatTime(isoString) {
+      if (!isoString) return '';
+      try {
+        const d = new Date(isoString);
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      } catch { return isoString; }
+    }
+
     function renderMessages(messages) {
       const list = document.getElementById('message-list');
-      if (!messages || !messages.length) {
-        return; // 不清空历史消息
-      }
+      if (!messages || !messages.length) return;
       list.innerHTML = messages.map(m => `
         <div class="message ${m.role}">
           <div>${textToHtml(m.content_text || '')}</div>
-          <div class="time">${m.created_at || ''}</div>
+          <div class="time">${formatTime(m.created_at)}</div>
         </div>
       `).join('');
       list.scrollTop = list.scrollHeight;
