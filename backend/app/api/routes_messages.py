@@ -102,7 +102,7 @@ async def create_and_dispatch_message_task(
         await db.commit()
         if dispatch_target_agent_id:
             auth_token = agent_link_service.build_agent_token(tenant_id, dispatch_target_agent_id, tenant.get("sub"))
-            await agent_link_service.dispatch_task(task, auth_token, db=db)
+            await agent_link_service.dispatch_task(task, auth_token)
 
     return MessageSendResponse(
         task_id=task.task_id,

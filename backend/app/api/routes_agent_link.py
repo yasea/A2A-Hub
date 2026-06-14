@@ -1145,8 +1145,6 @@ async def agent_link_self_register(req: AgentLinkSelfRegisterRequest, request: R
                         "agent_summary": agent_summary,
                         "local_agent_id": req.config_json.get("local_agent_id") or agent_id.split(":")[-1],
                         "owner_profile": owner_profile,
-                        **({"dispatch_channel": req.dispatch_channel} if req.dispatch_channel else {}),
-                        **({"dispatch_config": req.dispatch_config} if req.dispatch_config else {}),
                     },
                     actor_id=str(owner_profile.get("user_id") or owner_profile.get("owner_id") or agent_id),
                 )
