@@ -413,8 +413,7 @@ async def custom_swagger_docs():
     if (copyServicePrompt) {
       copyServicePrompt.addEventListener("click", async () => {
         try {
-          const resp = await fetch("/agent-link/copy/service");
-          const text = await resp.text();
+          const text = "openclaw aimoo --agent <agent-id> services register";
           const copied = await copyText(text);
           if (!copied) {
             throw new Error("浏览器拒绝复制");

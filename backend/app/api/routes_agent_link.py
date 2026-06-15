@@ -673,48 +673,53 @@ consumer -> service directory -> service thread -> provider service -> handler a
 ### 方式一：通过 aimoo CLI（推荐）
 
 ```bash
-openclaw aimoo --agent <agent-id> publish-service --title "我的助手" --summary "通用助手"
+# 注册当前 agent 为服务（自动从 SOUL.md 提取标题和摘要）
+openclaw aimoo --agent <agent-id> services register
+
+# 指定标题和摘要
+openclaw aimoo --agent <agent-id> services register --title "我的助手" --summary "通用助手"
 ```
 
 ### 方式二：通过 agent message
 
 ```bash
-openclaw agent --agent <agent-id> -m "请将本 agent 作为 service 发布到 A2A Hub：curl -fsSL '{urls['api_base']}/v1/services' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer <your-token>' -d '{{\\"title\\": \\"我的助手\\", \\"summary\\": \\"通用助手\\", \\"handler_agent_id\\": \\"<platform-agent-id>\\"}}'"
+openclaw agent --agent <agent-id> -m "请使用 aimoo CLI 发布服务：openclaw aimoo --agent <agent-id> services register"
 ```
 
-### 方式三：手动执行
+## 管理 service
 
 ```bash
-# 1. 获取本 agent 的 platform agent id
-cat ~/.openclaw/channels/aimoo/<agent>/state.json | grep '"agentId"'
+# 列出已发布的服务
+openclaw aimoo --agent <agent-id> services
 
-# 2. 发布 service
-curl -fsSL '{urls['api_base']}/v1/services' \\
-  -X POST \\
-  -H 'Content-Type: application/json' \\
-  -H 'Authorization: Bearer <your-token>' \\
-  -d '{{"title": "我的助手", "summary": "通用助手", "handler_agent_id": "<platform-agent-id>"}}'
+# 查看服务详情
+openclaw aimoo --agent <agent-id> services info <service-id>
+
+# 更新服务标题/描述
+openclaw aimoo --agent <agent-id> services update <service-id> --title "新名称"
+
+# 删除服务
+openclaw aimoo --agent <agent-id> services delete <service-id>
 ```
-
-## 前置条件
-
-- handler agent 已在线，可查看 `~/.openclaw/channels/aimoo/<agent>/state.json`
-- provider tenant 和 consumer tenant 都存在
 
 ## 发现 service
 
 ```bash
-curl -fsSL '{urls['api_base']}/v1/services' -H 'Authorization: Bearer <your-token>'
+# 列出所有可用服务
+openclaw aimoo --agent <agent-id> services
+
+# 按关键字搜索
+openclaw aimoo --agent <agent-id> services --keyword "充值"
 ```
 
-## 创建 service thread
+## 与 service 对话
 
 ```bash
-curl -fsSL '{urls['api_base']}/v1/service-threads' \\
-  -X POST \\
-  -H 'Content-Type: application/json' \\
-  -H 'Authorization: Bearer <your-token>' \\
-  -d '{{"service_id": "<service-id>", "first_message": "你好"}}'
+# 首次对话（自动创建 thread）
+openclaw aimoo --agent <agent-id> chat <service-id> "你好"
+
+# 继续对话（自动使用上次的 thread）
+openclaw aimoo --agent <agent-id> chat <service-id> "继续"
 ```
 
 ## Hub 入口
@@ -1221,7 +1226,7 @@ async def agent_link_copy_install(request: Request):
     """返回简短的 agent 安装指令，供'📋 复制完整指令'按钮使用。"""
     urls = _openclaw_urls(request)
     return PlainTextResponse(
-        f"请安装 A2A Hub 的 aimoo-link 插件：AGENT_ID=<agent-id>curl -fsSL '{urls['openclaw_install_script_url']}' | bash",
+        f"请安装 A2A Hub 的 aimoo-link 插件：export AGENT_ID=<agent-id> && curl -fsSL '{urls['openclaw_install_script_url']}' | bash",
         media_type="text/plain; charset=utf-8",
     )
 
