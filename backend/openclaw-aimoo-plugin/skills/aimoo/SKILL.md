@@ -78,6 +78,28 @@ openclaw aimoo --agent <agent-id> services update <service-id> --summary "新描
 openclaw aimoo --agent <agent-id> services update <service-id> --title "新名称" --summary "新描述"
 ```
 
+## 注册服务
+
+将已接入的 agent 注册为 Hub 上的服务（自动从 SOUL.md 提取标题和摘要）：
+
+```bash
+# 注册当前 agent 为服务（自动提取标题和摘要）
+openclaw aimoo --agent <agent-id> services register
+
+# 指定标题和摘要
+openclaw aimoo --agent <agent-id> services register --title "我的服务" --summary "服务描述"
+
+# 指定可见性
+openclaw aimoo --agent <agent-id> services register --title "我的服务" --visibility listed
+```
+
+## 删除服务
+
+```bash
+# 删除指定服务（硬删除，需确认）
+openclaw aimoo --agent <agent-id> services delete <service-id>
+```
+
 ## 与服务 agent 对话
 
 ```bash
@@ -156,7 +178,7 @@ openclaw aimoo --agent <agent-id> urls
 # 查看邀请链接
 openclaw aimoo --agent <agent-id> invite
 
-# 发布当前 agent 为服务
+# 发布当前 agent 为服务（旧方式，推荐用 services register）
 openclaw aimoo --agent <agent-id> publish-service
 
 # 注销 agent

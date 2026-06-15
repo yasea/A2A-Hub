@@ -336,13 +336,14 @@ async def docs_test_create_service(body: dict):
 
 
 @router.delete("/v1/docs-test/services", response_model=ApiResponse[dict], include_in_schema=False)
-async def docs_test_delete_services(status: str = "INACTIVE"):
-    """硬删除指定状态的服务及其关联的 thread（用于清理测试残留）。默认删除所有 INACTIVE 服务。"""
+async def docs_test_delete_services(status: str = "INACTIVE", tenant_id: str | None = None):
+    """硬删除指定状态的服务及其关联的 thread（用于清理测试残留）。默认删除所有 INACTIVE 服务。可选按 tenant_id 过滤。"""
     _ensure_docs_test_enabled()
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(ServicePublication).where(ServicePublication.status == status)
-        )
+        stmt = select(ServicePublication).where(ServicePublication.status == status)
+        if tenant_id:
+            stmt = stmt.where(ServicePublication.tenant_id == tenant_id)
+        result = await db.execute(stmt)
         publications = result.scalars().all()
         deleted = 0
         for pub in publications:
@@ -356,7 +357,7 @@ async def docs_test_delete_services(status: str = "INACTIVE"):
             await db.delete(pub)
             deleted += 1
         await db.commit()
-    return ApiResponse.ok({"deleted": deleted, "status_filter": status})
+    return ApiResponse.ok({"deleted": deleted, "status_filter": status, "tenant_filter": tenant_id})
 
 
 @router.post("/v1/docs-test/services/{service_id}/send", response_model=ApiResponse[dict], include_in_schema=False)

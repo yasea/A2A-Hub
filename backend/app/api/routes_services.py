@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
 
 from app.api.deps import DbDep, TenantDep
+from app.models.service import ServiceThread
 from app.schemas.common import ApiResponse
 from app.schemas.service import (
     ServicePublicationCreateRequest,
@@ -85,6 +87,40 @@ async def update_service_publication(service_id: str, req: ServicePublicationUpd
     except ServicePublicationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return ApiResponse.ok(ServicePublicationResponse.model_validate(item))
+
+
+@router.delete(
+    "/services/{service_id}",
+    response_model=ApiResponse[dict],
+    summary="删除服务",
+    description="服务提供者使用。硬删除服务及其关联的 thread 和消息。只允许删除自己租户的服务。",
+)
+async def delete_service(service_id: str, db: DbDep, tenant: TenantDep):
+    svc = ServiceDirectoryService(db)
+    publication = await svc.get_owned(service_id, tenant["tenant_id"])
+    if not publication:
+        raise HTTPException(status_code=404, detail="service 不存在或不属于当前租户")
+
+    title = publication.title
+
+    # 删除关联的 threads（CASCADE 会自动删除 thread_messages）
+    threads_result = await db.execute(
+        select(ServiceThread).where(ServiceThread.service_id == service_id)
+    )
+    threads = threads_result.scalars().all()
+    for thread in threads:
+        await db.delete(thread)
+
+    # 删除服务
+    await db.delete(publication)
+    await db.commit()
+
+    return ApiResponse.ok({
+        "deleted": True,
+        "service_id": service_id,
+        "title": title,
+        "threads_deleted": len(threads),
+    })
 
 
 @router.get(

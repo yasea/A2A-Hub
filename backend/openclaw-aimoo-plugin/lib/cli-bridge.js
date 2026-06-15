@@ -37,6 +37,10 @@ Usage:
   openclaw aimoo --agent <id> remove             Remove agent from A2A Hub
   openclaw aimoo --agent <id> publish-service    Publish agent as a service
   openclaw aimoo --agent <id> services           List available services on Hub
+  openclaw aimoo --agent <id> services register  Register current agent as a service
+  openclaw aimoo --agent <id> services delete <id> Delete a service
+  openclaw aimoo --agent <id> services info <id> View service details
+  openclaw aimoo --agent <id> services update <id> Update service title/summary
   openclaw aimoo --agent <id> chat <svc> <msg>   Chat with a service agent
   openclaw aimoo setup [agentId] [--connect-url] Configure agent and restart Gateway
   openclaw aimoo --agent <id> request <target>   Create friend request
@@ -1263,6 +1267,98 @@ async function main() {
           method: "PATCH", headers: headers,
           body: JSON.stringify(updateBody), timeoutMs: timeoutMs,
         }).then(function(response) { return { service: response.data || response }; });
+      }
+      // services delete <id>
+      if (subCmd === "delete") {
+        var deleteId = process.argv[4];
+        if (!deleteId) throw new Error("service_id is required for services delete");
+        return requestJson(ctx.baseUrl + "/v1/services/" + encodeURIComponent(deleteId), {
+          method: "DELETE", headers: headers, timeoutMs: timeoutMs,
+        }).then(function(response) { return response.data || response; });
+      }
+      // services register [--title "..."] [--summary "..."] [--visibility listed|private|direct_link]
+      if (subCmd === "register") {
+        var regTitle = "";
+        var regSummary = "";
+        var regVisibility = "listed";
+        for (var ri = 4; ri < process.argv.length; ri++) {
+          if (process.argv[ri] === "--title" && ri + 1 < process.argv.length) regTitle = process.argv[++ri];
+          else if (process.argv[ri] === "--summary" && ri + 1 < process.argv.length) regSummary = process.argv[++ri];
+          else if (process.argv[ri] === "--visibility" && ri + 1 < process.argv.length) regVisibility = process.argv[++ri];
+        }
+        // 从 SOUL.md 提取默认标题和摘要
+        var localAgentId = String(config.localAgentId || "").split(":").pop();
+        if (!regTitle || !regSummary) {
+          var soulPaths = [
+            path.join(process.env.HOME || "~", ".openclaw", "workspace", localAgentId, "SOUL.md"),
+            path.join(process.env.HOME || "~", ".openclaw", "workspace-" + localAgentId, "SOUL.md"),
+          ];
+          for (var sp of soulPaths) {
+            try {
+              if (fs.existsSync(sp)) {
+                var soulContent = fs.readFileSync(sp, "utf8");
+                var soulLines = soulContent.split("\n");
+                if (!regTitle) {
+                  var firstLine = soulLines[0].trim();
+                  var titleMatch = firstLine.match(/^#\s*SOUL\.md\s*[—\-]\s*(.+)/);
+                  regTitle = titleMatch ? titleMatch[1].trim() : firstLine.replace(/^#\s*/, "").trim();
+                }
+                if (!regSummary) {
+                  var inSection = false;
+                  var sumLines = [];
+                  for (var sli = 1; sli < soulLines.length && sumLines.length < 3; sli++) {
+                    var sl = soulLines[sli].trim();
+                    if (/^##\s*(你是谁|基本身份|简介|概述|About)/i.test(sl)) { inSection = true; continue; }
+                    if (/^##\s/.test(sl) && inSection) break;
+                    if (inSection && sl && !sl.startsWith("#")) sumLines.push(sl);
+                  }
+                  regSummary = sumLines.join(" ").substring(0, 200);
+                }
+                break;
+              }
+            } catch {}
+          }
+        }
+        if (!regTitle) regTitle = localAgentId || "OpenClaw Agent";
+        if (!regSummary) regSummary = "Registered via openclaw aimoo CLI";
+
+        // 检查是否已有服务
+        var existingSvc = null;
+        try {
+          var listR = await requestJson(ctx.baseUrl + "/v1/services?limit=50", { headers: headers, timeoutMs: 8000 });
+          var svcList = (listR.data || listR || []);
+          if (Array.isArray(svcList)) {
+            for (var s of svcList) {
+              if (s.handler_agent_id === platformAgentId) { existingSvc = s; break; }
+            }
+          }
+        } catch {}
+
+        if (existingSvc) {
+          if (existingSvc.status === "ACTIVE") {
+            return { registered: "skipped", reason: "service already ACTIVE", service_id: existingSvc.service_id, title: existingSvc.title };
+          }
+          // 重新激活
+          try {
+            var reactivate = await requestJson(ctx.baseUrl + "/v1/services/" + existingSvc.service_id, {
+              method: "PATCH", headers: headers,
+              body: JSON.stringify({ status: "ACTIVE", title: regTitle, summary: regSummary, visibility: regVisibility }),
+              timeoutMs: timeoutMs,
+            });
+            return { registered: "reactivated", service: reactivate.data || reactivate };
+          } catch {}
+        }
+
+        return requestJson(ctx.baseUrl + "/v1/services", {
+          method: "POST", headers: headers,
+          body: JSON.stringify({
+            handler_agent_id: platformAgentId,
+            title: regTitle,
+            summary: regSummary,
+            visibility: regVisibility,
+          }),
+          timeoutMs: timeoutMs,
+        }).then(function(response) { return { registered: "created", service: response.data || response }; });
       }
       // services list (with search/pagination)
       var queryParams = [];

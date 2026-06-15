@@ -290,12 +290,10 @@ async def custom_swagger_docs():
 <div id="agent-onboarding-card">
   <strong>🔗 OpenClaw Agent 接入</strong> &nbsp;·&nbsp;
   让本机 agent 自己完成注册和 MQTT 连接：
-  <button id="copy-agent-onboarding">📋 复制完整指令</button>
-  <a class="secondary" href="/agent-link/prompt" target="_blank">📄 指令文本</a>
-  <a class="secondary" href="/agent-link/connect" target="_blank">⚙️ Runbook</a>
+  <button id="copy-agent-onboarding">📋 复制安装指令</button>
+  <a class="secondary" href="/agent-link/prompt" target="_blank">📄 接入说明</a>
   &nbsp;|&nbsp;
-  <button id="copy-service-prompt">🛠️ 发布服务</button>
-  <a class="secondary" href="/agent-link/service-prompt" target="_blank">📄 服务接入说明</a>
+  <button id="copy-service-prompt">🛠️ 复制发布服务指令</button>
   &nbsp;|&nbsp;
   <a class="secondary" href="/docs/services" target="_blank">📋 服务目录</a>
   <a class="secondary" href="/docs/errors" target="_blank">⚠️ 错误记录</a>
@@ -404,7 +402,7 @@ async def custom_swagger_docs():
           throw new Error("浏览器拒绝复制");
         }
         copyOnboarding.textContent = "已复制，可直接发给 Agent";
-        setTimeout(() => { copyOnboarding.textContent = "复制给 Agent 的完整指令"; }, 2400);
+        setTimeout(() => { copyOnboarding.textContent = "📋 复制安装指令"; }, 2400);
       } catch (err) {
         window.open("/agent-link/prompt", "_blank");
         alert("浏览器阻止了自动复制，已打开指令文本页，请在新页面中全选复制。");
@@ -422,7 +420,7 @@ async def custom_swagger_docs():
             throw new Error("浏览器拒绝复制");
           }
           copyServicePrompt.textContent = "已复制！";
-          setTimeout(() => { copyServicePrompt.textContent = "🛠️ 发布服务"; }, 2400);
+          setTimeout(() => { copyServicePrompt.textContent = "🛠️ 复制发布服务指令"; }, 2400);
         } catch (err) {
           window.open("/agent-link/service-prompt", "_blank");
         }

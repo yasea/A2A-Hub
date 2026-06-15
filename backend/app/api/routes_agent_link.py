@@ -1215,7 +1215,7 @@ async def agent_link_copy_install(request: Request):
     """返回简短的 agent 安装指令，供'📋 复制完整指令'按钮使用。"""
     urls = _openclaw_urls(request)
     return PlainTextResponse(
-        f"请安装 A2A Hub 的 aimoo-link 插件：curl -fsSL '{urls['openclaw_install_script_url']}' | bash",
+        f"请安装 A2A Hub 的 aimoo-link 插件：AGENT_ID=<agent-id>curl -fsSL '{urls['openclaw_install_script_url']}' | bash",
         media_type="text/plain; charset=utf-8",
     )
 
