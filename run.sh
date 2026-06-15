@@ -35,6 +35,23 @@ touch "$SCRIPT_DIR/deploy/mosquitto/passwordfile" "$SCRIPT_DIR/deploy/mosquitto/
 docker compose down
 docker compose up -d postgres redis
 
+# 等待 postgres 就绪
+echo "等待 PostgreSQL 就绪..."
+i=0
+max_attempts=30
+while [ $i -lt $max_attempts ]; do
+  if docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-a2a_hub}" >/dev/null 2>&1; then
+    echo "PostgreSQL 已就绪"
+    break
+  fi
+  i=$((i+1))
+  sleep 1
+done
+if [ $i -ge $max_attempts ]; then
+  echo "PostgreSQL 启动超时" >&2
+  exit 1
+fi
+
 docker compose up -d db-init
 
 # 等待 db-init 完成
@@ -85,5 +102,5 @@ if [ $attempt -ge $max_attempts ]; then
 fi
 
 docker compose up -d mosquitto api
-echo "已启动 redis、mosquitto、api，并执行数据库初始化与 MQTT auth 渲染。"
+echo "已启动 postgres、redis、mosquitto、api，并执行数据库初始化与 MQTT auth 渲染。"
 echo "默认访问地址: $API_URL"
