@@ -258,15 +258,17 @@ async def docs_test_list_errors(agent_id: str | None = None, source_side: str | 
 # ─────────────────────────────────────────────────────────────────────────
 
 @router.get("/v1/docs-test/services", response_model=ApiResponse[list[dict]], include_in_schema=False)
-async def docs_test_list_services(visibility: str | None = None):
-    """列出所有已注册的服务（用于 docs 测试面板）。"""
+async def docs_test_list_services(visibility: str | None = None, status: str | None = "ACTIVE"):
+    """列出所有已注册的服务（用于 docs 测试面板）。默认只返回 ACTIVE 服务。"""
     _ensure_docs_test_enabled()
     async with AsyncSessionLocal() as db:
         svc = ServiceDirectoryService(db)
-        # 获取所有服务，可按 visibility 过滤
+        # 获取所有服务，可按 visibility 和 status 过滤
         query = select(ServicePublication)
         if visibility:
             query = query.where(ServicePublication.visibility == visibility)
+        if status:
+            query = query.where(ServicePublication.status == status)
         query = query.order_by(ServicePublication.created_at.desc())
         result = await db.execute(query)
         publications = result.scalars().all()
