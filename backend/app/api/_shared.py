@@ -44,6 +44,8 @@ def _openclaw_urls(request: Request | None = None) -> dict[str, str]:
         "friend_tools_url": f"{base_url}/agent-link/friend-tools",
         "install_report_url": f"{base_url}/v1/agent-link/install-report",
         "presence_url": f"{base_url}/v1/agent-link/presence",
+        "services_url": f"{base_url}/v1/services",
+        "service_prompt_url": f"{base_url}/agent-link/service-prompt",
         "transcript_webhook_url": f"{base_url}/v1/openclaw/events/transcript",
         "approval_webhook_url": f"{base_url}/v1/openclaw/events/approval",
     }

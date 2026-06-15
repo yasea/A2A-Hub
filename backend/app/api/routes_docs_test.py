@@ -15,7 +15,7 @@ from app.api._shared import (
 )
 from app.core.db import AsyncSessionLocal
 from app.models.agent import Agent
-from app.models.service import ServicePublication
+from app.models.service import ServicePublication, ServiceThread
 from app.schemas.common import ApiResponse
 from app.schemas.integration import (
     AgentLinkErrorEventResponse,
@@ -335,6 +335,30 @@ async def docs_test_create_service(body: dict):
     })
 
 
+@router.delete("/v1/docs-test/services", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_delete_services(status: str = "INACTIVE"):
+    """硬删除指定状态的服务及其关联的 thread（用于清理测试残留）。默认删除所有 INACTIVE 服务。"""
+    _ensure_docs_test_enabled()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ServicePublication).where(ServicePublication.status == status)
+        )
+        publications = result.scalars().all()
+        deleted = 0
+        for pub in publications:
+            # 先删除关联的 service_threads
+            threads_result = await db.execute(
+                select(ServiceThread).where(ServiceThread.service_id == pub.service_id)
+            )
+            threads = threads_result.scalars().all()
+            for thread in threads:
+                await db.delete(thread)
+            await db.delete(pub)
+            deleted += 1
+        await db.commit()
+    return ApiResponse.ok({"deleted": deleted, "status_filter": status})
+
+
 @router.post("/v1/docs-test/services/{service_id}/send", response_model=ApiResponse[dict], include_in_schema=False)
 async def docs_test_service_conversation(service_id: str, body: dict):
     """向服务发起对话（创建 thread 并发送第一条消息）。"""
@@ -422,6 +446,18 @@ async def docs_test_list_service_threads(service_id: str):
         "created_at": str(t.created_at) if t.created_at else None,
         "updated_at": str(t.updated_at) if t.updated_at else None,
     } for t in threads])
+
+
+@router.get("/v1/docs-test/token", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_token(tenant_id: str):
+    """为指定 tenant 生成测试 JWT token（仅供 /docs/services 测试面板使用）。"""
+    _ensure_docs_test_enabled()
+    from app.core.security import create_access_token
+    token = create_access_token(
+        subject=f"docs-test:{tenant_id}",
+        extra={"tenant_id": tenant_id, "token_type": "docs-test"},
+    )
+    return ApiResponse.ok({"token": token, "tenant_id": tenant_id})
 
 
 @router.get("/v1/docs-test/threads/{thread_id}/messages", response_model=ApiResponse[list[dict]], include_in_schema=False)

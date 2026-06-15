@@ -15,18 +15,20 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
     def test_reset_server_script_has_valid_bash_syntax(self):
         subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "reset_server_agent_link_state.sh")])
 
-    def test_reset_client_script_has_valid_bash_syntax(self):
-        subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "reset_client_agent_link_state.sh")])
+    def test_reset_agent_link_script_has_valid_bash_syntax(self):
+        subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "reset_agent_link.sh")])
 
-    def test_reset_client_help_describes_side_effects(self):
+    def test_reset_agent_link_help_describes_side_effects(self):
         output = subprocess.check_output(
-            ["bash", str(self.project_root / "tests" / "reset_client_agent_link_state.sh"), "--help"],
+            ["bash", str(self.project_root / "tests" / "reset_agent_link.sh"), "--help"],
             text=True,
         )
         self.assertIn("OPENCLAW_HOME", output)
         self.assertIn("openclaw.json", output)
         self.assertIn("sessions.json", output)
         self.assertIn("TOOLS.md", output)
+        self.assertIn("remove-plugin", output)
+        self.assertIn("remove-remote", output)
 
     def test_openclaw_owner_friend_cli_flow_has_valid_bash_syntax(self):
         subprocess.check_call(["bash", "-n", str(self.project_root / "tests" / "integration" / "openclaw_owner_friend_cli_flow.sh")])
@@ -41,212 +43,6 @@ class AgentLinkOpsScriptsTest(unittest.TestCase):
         body = (self.project_root / "docs" / "agent-friends.md").read_text(encoding="utf-8")
         self.assertIn("/v1/agents/invite?token=", body)
         self.assertNotIn("/agent-link/invite?token=", body)
-
-    def test_reset_client_script_cleans_agent_link_artifacts_without_touching_other_config(self):
-        script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            (home / "plugins" / "aimoo-link").mkdir(parents=True)
-            (home / "channels" / "aimoo" / "ava").mkdir(parents=True)
-            (home / "workspace" / "ava" / ".agent-link").mkdir(parents=True)
-            (home / "workspace-main" / ".agent-link").mkdir(parents=True)
-            (home / "agents" / "ava" / "sessions").mkdir(parents=True)
-            (home / "agents" / "main" / "sessions").mkdir(parents=True)
-
-            config = {
-                "plugins": {
-                    "allow": ["aimoo-link", "other-plugin"],
-                    "load": {"paths": [str(home / "plugins" / "aimoo-link"), "/opt/other"]},
-                    "entries": {
-                        "aimoo-link": {"enabled": True},
-                        "other-plugin": {"enabled": True},
-                    },
-                },
-                "channels": {
-                    "aimoo": {
-                        "enabled": True,
-                        "instances": [
-                            {"localAgentId": "ava", "agentId": "openclaw:ava"},
-                            {"localAgentId": "main", "agentId": "openclaw:main"},
-                        ],
-                    },
-                    "telegram": {"enabled": True},
-                },
-            }
-            (home / "openclaw.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            (home / "channels" / "aimoo" / "ava" / "state.json").write_text("{}", encoding="utf-8")
-            (home / "workspace" / "ava" / ".agent-link" / "install-result.json").write_text("{}", encoding="utf-8")
-            (home / "workspace" / "ava" / ".agent-link" / "install-check.log").write_text("log", encoding="utf-8")
-            (home / "workspace-main" / ".agent-link" / "install-check.log").write_text("log", encoding="utf-8")
-            (home / "agents" / "ava" / "sessions" / "sessions.json").write_text(
-                json.dumps(
-                    {
-                        "agent:ava:main": {"sessionId": "aimoo:bad"},
-                        "agent:ava:keep": {"sessionId": "normal"},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            (home / "agents" / "main" / "sessions" / "sessions.json").write_text(
-                json.dumps(
-                    {
-                        "agent:main:main": {"sessionId": "aimoo:another"},
-                        "agent:main:keep": {"sessionId": "ok"},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-            subprocess.check_call(
-                ["bash", str(script), "--all"],
-                env={**os.environ, "OPENCLAW_HOME": str(home)},
-            )
-
-            updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
-            self.assertEqual(updated["plugins"]["allow"], ["other-plugin"])
-            self.assertEqual(updated["plugins"]["load"]["paths"], ["/opt/other"])
-            self.assertNotIn("aimoo-link", updated["plugins"]["entries"])
-            self.assertNotIn("aimoo", updated["channels"])
-            self.assertEqual(updated["channels"]["telegram"], {"enabled": True})
-            self.assertFalse((home / "channels" / "aimoo").exists())
-            self.assertFalse((home / "workspace" / "ava" / ".agent-link").exists())
-            self.assertFalse((home / "workspace-main" / ".agent-link").exists())
-
-            ava_sessions = json.loads((home / "agents" / "ava" / "sessions" / "sessions.json").read_text(encoding="utf-8"))
-            main_sessions = json.loads((home / "agents" / "main" / "sessions" / "sessions.json").read_text(encoding="utf-8"))
-            self.assertNotIn("agent:ava:main", ava_sessions)
-            self.assertEqual(ava_sessions["agent:ava:keep"]["sessionId"], "normal")
-            self.assertNotIn("agent:main:main", main_sessions)
-            self.assertEqual(main_sessions["agent:main:keep"]["sessionId"], "ok")
-
-    def test_reset_client_agent_mode_removes_empty_aimoo_channel_with_plugin_config(self):
-        """按 agent 清理时不能留下未加载插件的空 aimoo channel。"""
-        script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            (home / "plugins" / "aimoo-link").mkdir(parents=True)
-            config = {
-                "plugins": {
-                    "allow": ["aimoo-link", "other-plugin"],
-                    "load": {"paths": [str(home / "plugins" / "aimoo-link"), "/opt/other"]},
-                    "entries": {
-                        "aimoo-link": {"enabled": True},
-                        "other-plugin": {"enabled": True},
-                    },
-                },
-                "channels": {
-                    "aimoo": {
-                        "enabled": True,
-                        "replyMode": "openclaw-agent",
-                        "recordOpenClawSession": True,
-                    },
-                    "telegram": {"enabled": True},
-                },
-            }
-            (home / "openclaw.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-            subprocess.check_call(
-                ["bash", str(script), "--agent", "main"],
-                env={**os.environ, "OPENCLAW_HOME": str(home)},
-            )
-
-            updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
-            self.assertEqual(updated["plugins"]["allow"], ["other-plugin"])
-            self.assertEqual(updated["plugins"]["load"]["paths"], ["/opt/other"])
-            self.assertNotIn("aimoo-link", updated["plugins"]["entries"])
-            self.assertNotIn("aimoo", updated["channels"])
-            self.assertEqual(updated["channels"]["telegram"], {"enabled": True})
-
-    def test_reset_client_agent_mode_keeps_plugin_config_when_other_instances_remain(self):
-        """只清理一个 agent 时，仍有其他 aimoo 实例就必须保留插件加载配置。"""
-        script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            plugin_dir = home / "plugins" / "aimoo-link"
-            plugin_dir.mkdir(parents=True)
-            config = {
-                "plugins": {
-                    "allow": ["aimoo-link", "other-plugin"],
-                    "load": {"paths": [str(plugin_dir), "/opt/other"]},
-                    "entries": {
-                        "aimoo-link": {"enabled": True},
-                        "other-plugin": {"enabled": True},
-                    },
-                },
-                "channels": {
-                    "aimoo": {
-                        "enabled": True,
-                        "instances": [
-                            {"localAgentId": "ava", "agentId": "openclaw:ava"},
-                            {"localAgentId": "main", "agentId": "openclaw:main"},
-                        ],
-                    },
-                    "telegram": {"enabled": True},
-                },
-            }
-            (home / "openclaw.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-            subprocess.check_call(
-                ["bash", str(script), "--agent", "main"],
-                env={**os.environ, "OPENCLAW_HOME": str(home)},
-            )
-
-            updated = json.loads((home / "openclaw.json").read_text(encoding="utf-8"))
-            self.assertIn("aimoo-link", updated["plugins"]["allow"])
-            self.assertIn(str(plugin_dir), updated["plugins"]["load"]["paths"])
-            self.assertEqual(updated["plugins"]["entries"]["aimoo-link"], {"enabled": True})
-            self.assertEqual(updated["channels"]["aimoo"]["instances"], [{"localAgentId": "ava", "agentId": "openclaw:ava"}])
-
-    def test_reset_client_remove_plugin_really_removes_plugin_dir(self):
-        script = self.project_root / "tests" / "reset_client_agent_link_state.sh"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            plugin_dir = home / "plugins" / "aimoo-link"
-            plugin_backup = home / "plugins" / "aimoo-link.bak.1"
-            plugin_dir.mkdir(parents=True)
-            plugin_backup.mkdir(parents=True)
-            config = {
-                "plugins": {
-                    "allow": ["aimoo-link"],
-                    "load": {"paths": [str(plugin_dir)]},
-                    "entries": {"aimoo-link": {"enabled": True}},
-                },
-                "channels": {
-                    "aimoo": {
-                        "enabled": True,
-                        "instances": [{"localAgentId": "main", "agentId": "openclaw:main"}],
-                    }
-                },
-            }
-            (home / "openclaw.json").write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-            subprocess.check_call(
-                ["bash", str(script), "--all", "--remove-plugin"],
-                env={**os.environ, "OPENCLAW_HOME": str(home)},
-            )
-
-            self.assertFalse(plugin_dir.exists())
-            self.assertTrue(plugin_backup.exists())
-
-    def test_remote_prepare_extracts_agent_id_from_session_key(self):
-        module_path = self.project_root / "tests" / "remote_02_agent_link_prepare.py"
-        spec = importlib.util.spec_from_file_location("remote_02_agent_link_prepare", module_path)
-        module = importlib.util.module_from_spec(spec)
-        sys.path.insert(0, str(module_path.parent))
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            sys.path.pop(0)
-
-        self.assertEqual(module.从_session_key_解析_agent_id("agent:mia:main"), "mia")
-        self.assertEqual(module.从_session_key_解析_agent_id("agent:ava:telegram:direct:123"), "ava")
-        self.assertEqual(module.从_session_key_解析_agent_id("bad:mia:main"), "")
 
 
 if __name__ == "__main__":

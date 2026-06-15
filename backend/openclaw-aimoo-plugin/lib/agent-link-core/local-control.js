@@ -35,6 +35,8 @@ openclaw aimoo --agent ${agentId.split(":").pop()} accept-request <friend_id>
 openclaw aimoo --agent ${agentId.split(":").pop()} update-request <friend_id> rejected
 openclaw aimoo --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 FRIEND_DIALOG_OK"
 openclaw aimoo --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
+openclaw aimoo --agent ${agentId.split(":").pop()} remove
+openclaw aimoo --agent ${agentId.split(":").pop()} publish-service
 \`\`\`
 
 Report only safe fields such as agent_id, public_number, tenant_id, invite_url, friend_id, status, context_id, task_id, and target_agent_id. Never print auth_token, MQTT password, or a full Authorization header.
@@ -108,6 +110,12 @@ openclaw aimoo --agent ${agentId.split(":").pop()} update-request <friend_id> bl
 \`\`\`bash
 openclaw aimoo --agent ${agentId.split(":").pop()} send openclaw:ava "你好，请回复 OK"
 openclaw aimoo --agent ${agentId.split(":").pop()} send --context <context_id> openclaw:ava "继续上一轮对话"
+\`\`\`
+
+当主人说"取消接入 / 移除 A2A Hub"：
+
+\`\`\`bash
+openclaw aimoo --agent ${agentId.split(":").pop()} remove
 \`\`\`
 
 ## 安全要求

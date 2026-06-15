@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -81,6 +81,8 @@ class ServiceDirectoryService:
             self._validate_visibility(fields["visibility"])
         if "contact_policy" in fields and fields["contact_policy"] is not None:
             self._validate_contact_policy(fields["contact_policy"])
+        if "status" in fields and fields["status"] is not None:
+            self._validate_status(fields["status"])
         payload = {}
         for key, value in fields.items():
             if value is None:
@@ -102,6 +104,7 @@ class ServiceDirectoryService:
             actor_id=actor_id,
             payload=payload,
         )
+        await self.db.refresh(publication)
         return publication
 
     async def get_owned(self, service_id: str, tenant_id: str) -> ServicePublication | None:
@@ -123,13 +126,30 @@ class ServiceDirectoryService:
             return publication
         return None
 
-    async def list_accessible(self, viewer_tenant_id: str) -> list[ServicePublication]:
-        result = await self.db.execute(
-            select(ServicePublication).where(
-                ServicePublication.status == "ACTIVE",
-            )
+    async def list_accessible(
+        self,
+        viewer_tenant_id: str,
+        keyword: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[ServicePublication]:
+        stmt = select(ServicePublication).where(
+            ServicePublication.status == "ACTIVE",
+            or_(
+                ServicePublication.tenant_id == viewer_tenant_id,
+                ServicePublication.visibility == "listed",
+            ),
         )
+        if keyword:
+            pattern = f"%{keyword}%"
+            stmt = stmt.where(
+                ServicePublication.title.ilike(pattern)
+                | ServicePublication.summary.ilike(pattern)
+            )
+        stmt = stmt.order_by(ServicePublication.created_at.desc()).offset(offset).limit(limit)
+        result = await self.db.execute(stmt)
         items = list(result.scalars().all())
+        # 双重过滤：SQL 层 + 应用层（兼容 mock 测试）
         return [
             item for item in items
             if item.tenant_id == viewer_tenant_id or item.visibility == "listed"
@@ -161,4 +181,9 @@ class ServiceDirectoryService:
     def _validate_contact_policy(contact_policy: str) -> None:
         if contact_policy not in {"auto_accept", "request_required", "deny"}:
             raise ServicePublicationError("contact_policy 必须是 auto_accept/request_required/deny")
+
+    @staticmethod
+    def _validate_status(status: str) -> None:
+        if status not in {"ACTIVE", "INACTIVE", "ARCHIVED"}:
+            raise ServicePublicationError("status 必须是 ACTIVE/INACTIVE/ARCHIVED")
 

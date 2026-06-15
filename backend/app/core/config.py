@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     OPENCLAW_PUBLIC_BASE_URL: str | None = None  # legacy: use A2A_HUB_PUBLIC_BASE_URL
     AGENT_LINK_TRANSPORT: str = "mqtt"
     AGENT_LINK_PRESENCE_TTL_SECONDS: int = 90
+    SERVICE_AGENT_KEYWORDS: str = "助手,assistant,客服,service,服务,tool,plugin,API,自动化,bot,机器人"
     MQTT_BROKER_URL: str = "mqtt://127.0.0.1:1883"
     MQTT_PUBLIC_BROKER_URL: str | None = None
     MQTT_BASE_TOPIC: str = "a2a-hub"

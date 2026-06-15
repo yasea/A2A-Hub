@@ -248,7 +248,7 @@ async def custom_swagger_docs():
     border-radius: 6px;
     padding: 2px 5px;
   }
-  #agent-onboarding-card button, #agent-onboarding-card a {
+  #agent-onboarding-card button, #agent-onboarding-card a, #agent-onboarding-card input {
     display: inline-block;
     margin: 8px 8px 0 0;
     border-radius: 8px;
@@ -259,6 +259,10 @@ async def custom_swagger_docs():
     text-decoration: none;
     cursor: pointer;
     font-weight: 700;
+    font-size: 13px;
+  }
+  #agent-onboarding-card button:hover {
+    filter: brightness(1.1);
   }
   #agent-onboarding-card a.secondary {
     background: white;
@@ -290,7 +294,10 @@ async def custom_swagger_docs():
   <a class="secondary" href="/agent-link/prompt" target="_blank">📄 指令文本</a>
   <a class="secondary" href="/agent-link/connect" target="_blank">⚙️ Runbook</a>
   &nbsp;|&nbsp;
-  <a class="secondary" href="/docs/services" target="_blank">🛠️ 服务管理</a>
+  <button id="copy-service-prompt">🛠️ 发布服务</button>
+  <a class="secondary" href="/agent-link/service-prompt" target="_blank">📄 服务接入说明</a>
+  &nbsp;|&nbsp;
+  <a class="secondary" href="/docs/services" target="_blank">📋 服务目录</a>
   <a class="secondary" href="/docs/errors" target="_blank">⚠️ 错误记录</a>
   <textarea id="agent-onboarding-copy-buffer" aria-hidden="true" tabindex="-1"></textarea>
 </div>
@@ -324,6 +331,7 @@ async def custom_swagger_docs():
   const message = document.getElementById("agent-test-message");
   const output = document.getElementById("agent-test-output");
   const copyOnboarding = document.getElementById("copy-agent-onboarding");
+  const copyServicePrompt = document.getElementById("copy-service-prompt");
   const panelToggle = document.getElementById("agent-test-toggle");
   const panelCollapsedKey = "a2a-hub.docs.agent-test-panel.collapsed";
 
@@ -386,7 +394,7 @@ async def custom_swagger_docs():
 
     copyOnboarding.addEventListener("click", async () => {
       try {
-        const resp = await fetch("/agent-link/prompt");
+        const resp = await fetch("/agent-link/copy/install");
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`);
         }
@@ -402,6 +410,24 @@ async def custom_swagger_docs():
         alert("浏览器阻止了自动复制，已打开指令文本页，请在新页面中全选复制。");
       }
     });
+
+    // Service prompt copy
+    if (copyServicePrompt) {
+      copyServicePrompt.addEventListener("click", async () => {
+        try {
+          const resp = await fetch("/agent-link/copy/service");
+          const text = await resp.text();
+          const copied = await copyText(text);
+          if (!copied) {
+            throw new Error("浏览器拒绝复制");
+          }
+          copyServicePrompt.textContent = "已复制！";
+          setTimeout(() => { copyServicePrompt.textContent = "🛠️ 发布服务"; }, 2400);
+        } catch (err) {
+          window.open("/agent-link/service-prompt", "_blank");
+        }
+      });
+    }
   }
 
   async function loadAgents() {
@@ -777,6 +803,7 @@ async def docs_services_page():
     let currentServiceId = null;
     let currentThreadId = null;
     let currentTenantId = null;
+    let currentToken = null;
     let pollTimer = null;
     let allMessages = [];
 
@@ -800,6 +827,14 @@ async def docs_services_page():
       }
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
       return data.data;
+    }
+
+    async function authedApi(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (currentToken) {
+        headers['Authorization'] = 'Bearer ' + currentToken;
+      }
+      return api(path, { ...options, headers });
     }
 
     async function loadServices() {
@@ -869,6 +904,7 @@ async def docs_services_page():
 
     async function openChat(serviceId, tenantId, title) {
       allMessages = [];
+      currentToken = null;
       document.getElementById('chat-modal-title').textContent = '💬 ' + title;
       document.getElementById('chat-service-id').value = serviceId;
       document.getElementById('chat-tenant-id').value = tenantId;
@@ -879,6 +915,13 @@ async def docs_services_page():
       document.getElementById('chat-input').value = '';
       currentThreadId = null;
       currentTenantId = tenantId;
+      // 获取该服务 tenant 的测试 token（用于调用真实 API）
+      try {
+        const tokenData = await api('/v1/docs-test/token?tenant_id=' + encodeURIComponent(tenantId));
+        currentToken = tokenData.token;
+      } catch (err) {
+        console.warn('[openChat] 获取测试 token 失败:', err.message);
+      }
       openModal('chat-modal');
       document.getElementById('chat-input').focus();
     }
@@ -903,13 +946,33 @@ async def docs_services_page():
       const tenantId = document.getElementById('chat-tenant-id').value || currentTenantId;
 
       try {
-        const result = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
-        currentThreadId = result.thread_id;
-        currentTenantId = tenantId;
+        let result;
+        if (currentThreadId && currentToken) {
+          // 继续已有 thread — 使用真实 API
+          result = await authedApi('/v1/service-threads/' + encodeURIComponent(currentThreadId) + '/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+          });
+        } else if (currentToken) {
+          // 创建新 thread 并发送首条消息 — 使用真实 API
+          result = await authedApi('/v1/services/' + encodeURIComponent(serviceId) + '/threads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ opening_message: text })
+          });
+          currentThreadId = result.thread.thread_id;
+          currentTenantId = tenantId;
+        } else {
+          // 无 token，回退到 docs-test API
+          result = await api(`/v1/docs-test/services/${encodeURIComponent(serviceId)}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
+          currentThreadId = result.thread_id;
+          currentTenantId = tenantId;
+        }
         // 继续轮询等待回复
         startPolling(currentThreadId, currentTenantId);
       } catch (err) {
@@ -923,16 +986,26 @@ async def docs_services_page():
     function startPolling(threadId, tenantId) {
       let pollCount = 0;
       if (pollTimer) clearInterval(pollTimer);
+      // 记录开始轮询时的消息数，用于判断是否有新回复
+      const startMsgCount = allMessages.length;
       pollTimer = setInterval(async () => {
         pollCount++;
         try {
-          const messages = await api(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
+          let messages;
+          if (currentToken) {
+            messages = await authedApi('/v1/service-threads/' + encodeURIComponent(threadId) + '/messages');
+          } else {
+            messages = await api(`/v1/docs-test/threads/${encodeURIComponent(threadId)}/messages?tenant_id=${encodeURIComponent(tenantId)}`);
+          }
           if (messages && messages.length > allMessages.length) {
             allMessages = messages;
             renderMessages(allMessages);
           }
-          const assistant = messages.find(m => m.role === 'assistant' && m.content_text && m.content_text.trim());
-          if (assistant) {
+          // 只有当最新一条消息是 assistant 时才停止轮询（说明当前轮次已回复）
+          const lastMsg = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+          const hasNewReply = lastMsg && lastMsg.role === 'assistant' && lastMsg.content_text && lastMsg.content_text.trim()
+            && messages.length > startMsgCount;
+          if (hasNewReply) {
             clearInterval(pollTimer);
             pollTimer = null;
             document.getElementById('chat-input').disabled = false;
