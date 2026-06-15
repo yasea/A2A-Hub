@@ -411,9 +411,14 @@ try {
 fi
 
 # 使用 CLI 检测待安装 agent
-# 注意：openclaw 可能输出警告到 stdout，需要提取 JSON 部分
-PENDING_AGENTS=$(openclaw aimoo list --pending 2>/dev/null | \
-  node -e "
+# 如果指定了 AGENT_ID，只安装该 agent；否则安装所有 pending agent
+if [ -n "${AGENT_ID:-}" ]; then
+  PENDING_AGENTS="$AGENT_ID"
+  echo "指定安装 agent: $AGENT_ID"
+else
+  # 注意：openclaw 可能输出警告到 stdout，需要提取 JSON 部分
+  PENDING_AGENTS=$(openclaw aimoo list --pending 2>/dev/null | \
+    node -e "
 const input = require('fs').readFileSync(0,'utf8');
 // 找到 JSON 对象的开始位置
 const start = input.indexOf('{');
@@ -421,9 +426,10 @@ if (start === -1) process.exit(0);
 const json = input.substring(start);
 try {
   const d = JSON.parse(json);
-  console.log((d.agents||[]).map(a=>a.id).join('\n'));
+  console.log((d.agents||[]).map(a=>a.id).join('\\n'));
 } catch {}
 " 2>/dev/null || true)
+fi
 AGENT_COUNT=$(echo "$PENDING_AGENTS" | grep -c '.' 2>/dev/null || echo 0)
 
 if [ "$AGENT_COUNT" -eq 0 ]; then
