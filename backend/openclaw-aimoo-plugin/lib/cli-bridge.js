@@ -1136,7 +1136,7 @@ async function main() {
     console.log(JSON.stringify(resultData, null, 2));
     return;
   }
-  const result = await register(config).then(function(ctx) {
+  const result = await register(config).then(async function(ctx) {
     const headers = {
       "content-type": "application/json",
       accept: "application/json",
