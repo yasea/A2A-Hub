@@ -216,6 +216,12 @@ class AgentLinkErrorReportRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentLinkUnregisterRequest(BaseModel):
+    """Agent Link 注销请求。"""
+
+    confirm: bool = True
+
+
 class AgentLinkInstallReportRequest(BaseModel):
     agent_id: str
     status: str

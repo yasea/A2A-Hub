@@ -182,6 +182,8 @@ function inferAgentId(api, merged, fallbackAgentId) {
   return explicitAgentId || normalizeAgentId(fallbackAgentId) || "ava";
 }
 
+const DEFAULT_CONNECT_URL = "https://test.aihub.com/agent-link/connect";
+
 function resolveSingleConfig(merged, defaultAgentId = "ava") {
   const explicitReplyMode =
     typeof merged.replyMode === "string" && merged.replyMode.trim()
@@ -190,10 +192,16 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
   const agentId = typeof merged.agentId === "string" && merged.agentId.trim() ? merged.agentId.trim() : defaultAgentId;
   const shortId = normalizeAgentId(agentId) || normalizeAgentId(defaultAgentId) || "ava";
   const workspaceDir = resolveWorkspaceDir(shortId);
+
+  // 优先使用配置的 connectUrl，否则使用默认值
+  const configuredConnectUrl = typeof merged.connectUrl === "string" && merged.connectUrl.trim()
+    ? merged.connectUrl.trim()
+    : DEFAULT_CONNECT_URL;
+
   return {
     enabled: merged.enabled !== false,
     agentId,
-    connectUrl: typeof merged.connectUrl === "string" && merged.connectUrl.trim() ? merged.connectUrl.trim() : "",
+    connectUrl: configuredConnectUrl,
     userProfileFile: expandHome(
       typeof merged.userProfileFile === "string" && merged.userProfileFile.trim()
         ? merged.userProfileFile.trim()
@@ -255,7 +263,7 @@ function resolveSingleConfig(merged, defaultAgentId = "ava") {
     tlsRejectUnauthorized:
       typeof merged.tlsRejectUnauthorized === "boolean"
         ? merged.tlsRejectUnauthorized
-        : true,
+        : true, // 开发环境可能需要跳过证书验证
     recordOpenClawSession:
       typeof merged.recordOpenClawSession === "boolean"
         ? merged.recordOpenClawSession

@@ -108,6 +108,16 @@ class AgentLinkService:
         except Exception:
             return
 
+    async def cleanup(self, tenant_id: str, agent_id: str) -> None:
+        """清理 agent 的 presence 和 pending 数据（注销时调用）。"""
+        self._presence.pop((tenant_id, agent_id), None)
+        await self._clear_pending(tenant_id, agent_id)
+        try:
+            redis = get_redis()
+            await redis.delete(self._presence_key(tenant_id, agent_id))
+        except Exception:
+            return
+
     def command_topic(self, tenant_id: str, agent_id: str) -> str:
         return f"{settings.MQTT_BASE_TOPIC}/{tenant_id}/agents/{agent_id}/commands"
 

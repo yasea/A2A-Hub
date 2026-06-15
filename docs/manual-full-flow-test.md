@@ -25,43 +25,33 @@ export API=https://ai.hub.aimoo.com
 
 ## 2. 可用脚本
 
-部署与上传：
-
-```bash
-bash tests/upload_to_hub.sh
-bash tests/upload_to_hub.sh --only backend
-bash tests/upload_to_hub.sh --only tests
-```
-
 服务端重置：
 
 ```bash
 bash tests/reset_server_agent_link_state.sh
 ```
 
-客户端重置：
+客户端重置（统一脚本）：
 
 ```bash
-bash tests/reset_client_agent_link_state.sh --agent main
-bash tests/reset_client_agent_link_state.sh --all
-bash tests/reset_client_agent_link_state.sh --all --remove-plugin
+# 清理单个 agent
+bash tests/reset_agent_link.sh --agent main
+
+# 清理所有 agent
+bash tests/reset_agent_link.sh --all
+
+# 清理所有 agent 并删除插件和 skill
+bash tests/reset_agent_link.sh --all --remove-plugin
+
+# 清理所有 agent 并远程注销 Hub 侧记录
+bash tests/reset_agent_link.sh --all --remove-remote
 ```
 
-远端 Python 检查：
+CLI 状态检查：
 
 ```bash
-API=$API python3 tests/remote_01_health.py
-API=$API python3 tests/remote_02_agent_link_prepare.py --agent-id main
-API=$API python3 tests/remote_05_public_self_register.py --agent-id main
-```
-
-需要 `SERVICE_ACCOUNT_ISSUER_SECRET` 的脚本：
-
-```bash
-MAIN_AGENT_ID=$(openclaw aimoo --agent main status | jq -r .agent_id)
-AVA_AGENT_ID=$(openclaw aimoo --agent ava status | jq -r .agent_id)
-SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_03_platform_to_agent.py --target-agent-id "$MAIN_AGENT_ID"
-SERVICE_ACCOUNT_ISSUER_SECRET=<测试环境签发密钥> API=$API python3 tests/remote_06_service_conversation.py --handler-agent-id "$MAIN_AGENT_ID" --initiator-agent-id "$AVA_AGENT_ID"
+openclaw aimoo --agent main status
+openclaw aimoo --agent ava status
 ```
 
 正式集成脚本：
@@ -80,30 +70,19 @@ env PYTHONPATH="$PWD/backend" backend/.venv/bin/python -m unittest discover -s t
 
 ## 3. 推荐人工测试顺序
 
-### 3.1 上传环境
-
-```bash
-bash tests/upload_to_hub.sh
-```
-
-验收点：
-
-- `https://ai.hub.aimoo.com/docs#/` 可打开
-- `GET $API/v1/docs-test/agents` 能返回 JSON
-
-### 3.2 清理历史数据
+### 3.1 清理历史数据
 
 先清 Hub 侧，再清本地 OpenClaw：
 
 ```bash
 bash tests/reset_server_agent_link_state.sh
-bash tests/reset_client_agent_link_state.sh --agent main
+bash tests/reset_agent_link.sh --agent main
 ```
 
 如果要重新验证安装流程：
 
 ```bash
-bash tests/reset_client_agent_link_state.sh --all --remove-plugin
+bash tests/reset_agent_link.sh --all --remove-plugin
 ```
 
 ### 3.3 接入本地 OpenClaw

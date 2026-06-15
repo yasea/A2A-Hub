@@ -23,6 +23,7 @@ services:
       MQTT_BROKER_URL: mqtt://mosquitto:1883
       MQTT_PUBLIC_BROKER_URL: ${MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}
       MQTT_TENANT_PASSWORD_SECRET: ${MQTT_TENANT_PASSWORD_SECRET:-dev-tenant-mqtt-secret-change-in-production}
+      SERVICE_AGENT_KEYWORDS: ${SERVICE_AGENT_KEYWORDS:-助手,assistant,客服,service,服务,tool,plugin,API,自动化,bot,机器人}
       MQTT_AUTH_PASSWORDFILE: /app/runtime/mosquitto-auth/passwordfile
       MQTT_AUTH_ACLFILE: /app/runtime/mosquitto-auth/aclfile
       MQTT_AUTH_RELOAD_STAMP: /app/runtime/mosquitto-auth/reload.stamp

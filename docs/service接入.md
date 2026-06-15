@@ -14,48 +14,57 @@ consumer -> service directory -> service thread -> provider service -> handler a
 - consumer 面向 service 发起 thread，不直接跨租户私聊 handler agent。
 - handler agent 回复后，平台把 assistant 回复镜像回 service thread messages。
 
+## 发布 service（方式一：发给 agent 执行）
+
+```bash
+openclaw agent --agent <agent-id> -m "请将本 agent 作为 service 发布到 A2A Hub：curl -fsSL 'https://test.aihub.com/v1/services/publish' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer <your-token>' -d '{\"title\": \"我的助手\", \"summary\": \"通用助手\", \"handler_agent_id\": \"<platform-agent-id>\"}'"
+```
+
+## 发布 service（方式二：手动执行）
+
+```bash
+# 1. 获取本 agent 的 platform agent id
+cat ~/.openclaw/channels/aimoo/<agent>/state.json | grep '"agentId"'
+
+# 2. 发布 service
+curl -fsSL 'https://test.aihub.com/v1/services' \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <your-token>' \
+  -d '{
+    "title": "我的助手",
+    "summary": "通用助手",
+    "handler_agent_id": "<platform-agent-id>"
+  }'
+```
+
 ## 前置条件
 
-- handler agent 已在线，可查看 `~/.openclaw/channels/aimoo/<agent>/state.json`。
-- provider tenant 和 consumer tenant 都存在。
+- handler agent 已在线，可查看 `~/.openclaw/channels/aimoo/<agent>/state.json`
+- provider tenant 和 consumer tenant 都存在
 - `initiator_agent_id` 已注册。若没有，可先运行：
 
 ```bash
-python3 tests/remote_05_public_self_register.py \
-  --api-base https://ai.hub.aimoo.com \
-  --agent-id openclaw:consumer-prober \
-  --agent-summary "Consumer prober for service discovery"
+# 通过 CLI 注册 consumer agent
+openclaw aimoo --agent <consumer-agent> me
 ```
 
 ## 远端验证
 
-推荐直接使用：
+推荐使用集成测试脚本：
 
 ```bash
-python3 tests/remote_06_service_conversation.py \
-  --api-base https://ai.hub.aimoo.com \
-  --issuer-secret "$(grep '^SERVICE_ACCOUNT_ISSUER_SECRET=' .env | cut -d= -f2-)" \
-  --provider-tenant-id <provider-tenant-id> \
-  --consumer-tenant-id <consumer-tenant-id> \
-  --handler-agent-id openclaw:ava \
-  --initiator-agent-id openclaw:consumer-prober \
-  --first-message "请只回复：REMOTE_SERVICE_THREAD_OK" \
-  --first-expect REMOTE_SERVICE_THREAD_OK
+API=https://ai.hub.aimoo.com bash tests/integration/service_thread_flow.sh
 ```
 
-脚本会完成：
+该脚本会完成：
 
 - provider 发布 listed service
 - consumer 读取 service 详情
 - consumer 创建 thread 并发送消息
 - 等待 handler agent 回复
 
-多轮验证可追加：
-
-```bash
---second-message "请只回复：REMOTE_SERVICE_THREAD_ROUND2_OK" \
---second-expect REMOTE_SERVICE_THREAD_ROUND2_OK
-```
+多轮验证可修改脚本中的 `first_message` 和 `second_message` 参数。
 
 ## 接口验收字段
 

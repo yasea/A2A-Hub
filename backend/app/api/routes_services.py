@@ -91,11 +91,22 @@ async def update_service_publication(service_id: str, req: ServicePublicationUpd
     "/services",
     response_model=ApiResponse[list[ServicePublicationResponse]],
     summary="发现服务目录",
-    description="任意已认证租户、Agent 或平台组件使用。返回当前可发现的公开 service 列表。",
+    description="任意已认证租户、Agent 或平台组件使用。返回当前可发现的公开 service 列表。支持关键字搜索和分页。",
 )
-async def list_services(db: DbDep, tenant: TenantDep):
+async def list_services(
+    db: DbDep,
+    tenant: TenantDep,
+    keyword: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+):
     svc = ServiceDirectoryService(db)
-    items = await svc.list_accessible(tenant["tenant_id"])
+    items = await svc.list_accessible(
+        tenant["tenant_id"],
+        keyword=keyword,
+        offset=max(0, offset),
+        limit=min(max(1, limit), 100),
+    )
     return ApiResponse.ok([ServicePublicationResponse.model_validate(item) for item in items])
 
 
@@ -146,6 +157,21 @@ async def create_service_thread(service_id: str, req: ServiceThreadCreateRequest
             )
     except ServiceConversationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        from app.services.error_event_service import ErrorEventService
+        await ErrorEventService(db).record(
+            tenant_id=tenant.get("tenant_id"),
+            agent_id=tenant.get("agent_id"),
+            source_side="platform",
+            stage="create_service_thread",
+            category="server",
+            summary="创建服务会话失败",
+            request_path=f"/v1/services/{service_id}/threads",
+            status_code=500,
+            detail=str(exc),
+        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建服务会话失败: {exc}")
     return ApiResponse.ok(
         ServiceThreadCreateResponse(
             thread=ServiceThreadResponse.model_validate(thread),

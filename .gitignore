@@ -64,3 +64,6 @@ tests/output/
 tests/*.local.json
 
 history/
+
+CLAUDE.md
+SGP服务器说明.md

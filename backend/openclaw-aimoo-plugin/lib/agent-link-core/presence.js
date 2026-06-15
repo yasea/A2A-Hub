@@ -55,6 +55,7 @@ class PresenceClient {
       topic: this.bootstrap.mqttCommandTopic,
       agentId: this.bootstrap.agentId,
       tenantId: this.bootstrap.tenantId,
+      authToken: this.bootstrap.authToken,
     });
   }
 

@@ -1,5 +1,5 @@
 """
-Docs-test 联调接口：列出 agent、发测试消息、好友查询、任务查询、错误查询。
+Docs-test 联调接口：列出 agent、发测试消息、好友查询、服务查询、服务对话、任务查询、错误查询。
 """
 import uuid
 import inspect
@@ -15,6 +15,7 @@ from app.api._shared import (
 )
 from app.core.db import AsyncSessionLocal
 from app.models.agent import Agent
+from app.models.service import ServicePublication, ServiceThread
 from app.schemas.common import ApiResponse
 from app.schemas.integration import (
     AgentLinkErrorEventResponse,
@@ -26,6 +27,8 @@ from app.services.context_service import ContextService
 from app.services.error_event_service import ErrorEventService
 from app.services.friend_service import FriendService
 from app.services.task_service import TaskService
+from app.services.service_directory_service import ServiceDirectoryService
+from app.services.service_conversation_service import ServiceConversationService, ServiceConversationError
 from app.api.routes_messages import create_and_dispatch_message_task
 
 router = APIRouter(tags=["docs-test"])
@@ -248,3 +251,232 @@ async def docs_test_list_errors(agent_id: str | None = None, source_side: str | 
     async with AsyncSessionLocal() as db:
         items = await ErrorEventService(db).list_recent(agent_id=agent_id, source_side=source_side, limit=limit)
     return ApiResponse.ok([AgentLinkErrorEventResponse.model_validate(item) for item in items])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 服务 (Service) 相关接口
+# ─────────────────────────────────────────────────────────────────────────
+
+@router.get("/v1/docs-test/services", response_model=ApiResponse[list[dict]], include_in_schema=False)
+async def docs_test_list_services(visibility: str | None = None):
+    """列出所有已注册的服务（用于 docs 测试面板）。"""
+    _ensure_docs_test_enabled()
+    async with AsyncSessionLocal() as db:
+        svc = ServiceDirectoryService(db)
+        # 获取所有服务，可按 visibility 过滤
+        query = select(ServicePublication)
+        if visibility:
+            query = query.where(ServicePublication.visibility == visibility)
+        query = query.order_by(ServicePublication.created_at.desc())
+        result = await db.execute(query)
+        publications = result.scalars().all()
+
+    data = []
+    for pub in publications:
+        # 获取 handler agent 的在线状态
+        presence = await agent_link_service.get_presence(pub.tenant_id, pub.handler_agent_id)
+        data.append({
+            "service_id": pub.service_id,
+            "tenant_id": pub.tenant_id,
+            "handler_agent_id": pub.handler_agent_id,
+            "title": pub.title,
+            "summary": pub.summary,
+            "visibility": pub.visibility,
+            "status": pub.status,
+            "tags": pub.tags,
+            "capabilities_public": pub.capabilities_public,
+            "handler_online": bool(presence and presence.get("status") == "online"),
+        })
+    return ApiResponse.ok(data)
+
+
+@router.post("/v1/docs-test/services", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_create_service(body: dict):
+    """发布一个新服务（用于 docs 测试面板）。"""
+    _ensure_docs_test_enabled()
+    handler_agent_id = body.get("handler_agent_id")
+    title = body.get("title")
+    if not handler_agent_id or not title:
+        raise HTTPException(status_code=422, detail="handler_agent_id 和 title 必填")
+
+    async with AsyncSessionLocal() as db:
+        # 查找 handler agent
+        agent = (await db.execute(select(Agent).where(Agent.agent_id == handler_agent_id, Agent.status == "ACTIVE"))).scalars().first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="handler agent 不存在或未激活")
+
+        svc = ServiceDirectoryService(db)
+        publication = await svc.create(
+            tenant_id=agent.tenant_id,
+            handler_agent_id=handler_agent_id,
+            title=title,
+            summary=body.get("summary"),
+            visibility=body.get("visibility", "listed"),
+            contact_policy=body.get("contact_policy", "open"),
+            allow_agent_initiated_chat=body.get("allow_agent_initiated_chat", True),
+            tags=body.get("tags"),
+            capabilities_public=body.get("capabilities_public"),
+            metadata=body.get("metadata"),
+            service_id=body.get("service_id"),
+            actor_id="platform:docs-test",
+        )
+        await db.commit()
+
+    presence = await agent_link_service.get_presence(agent.tenant_id, handler_agent_id)
+    return ApiResponse.ok({
+        "service_id": publication.service_id,
+        "tenant_id": publication.tenant_id,
+        "handler_agent_id": publication.handler_agent_id,
+        "title": publication.title,
+        "summary": publication.summary,
+        "visibility": publication.visibility,
+        "status": publication.status,
+        "handler_online": bool(presence and presence.get("status") == "online"),
+    })
+
+
+@router.delete("/v1/docs-test/services", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_delete_services(status: str = "INACTIVE"):
+    """硬删除指定状态的服务及其关联的 thread（用于清理测试残留）。默认删除所有 INACTIVE 服务。"""
+    _ensure_docs_test_enabled()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ServicePublication).where(ServicePublication.status == status)
+        )
+        publications = result.scalars().all()
+        deleted = 0
+        for pub in publications:
+            # 先删除关联的 service_threads
+            threads_result = await db.execute(
+                select(ServiceThread).where(ServiceThread.service_id == pub.service_id)
+            )
+            threads = threads_result.scalars().all()
+            for thread in threads:
+                await db.delete(thread)
+            await db.delete(pub)
+            deleted += 1
+        await db.commit()
+    return ApiResponse.ok({"deleted": deleted, "status_filter": status})
+
+
+@router.post("/v1/docs-test/services/{service_id}/send", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_service_conversation(service_id: str, body: dict):
+    """向服务发起对话（创建 thread 并发送第一条消息）。"""
+    _ensure_docs_test_enabled()
+    message = body.get("message", "请只回复：SERVICE_TEST_OK")
+    initiator_agent_id = body.get("initiator_agent_id")
+
+    async with AsyncSessionLocal() as db:
+        # 获取服务信息
+        svc_dir = ServiceDirectoryService(db)
+        publication = await svc_dir.get_accessible(service_id, None)
+        if not publication:
+            raise HTTPException(status_code=404, detail="服务不存在或不可见")
+
+        # 创建 thread
+        svc_conv = ServiceConversationService(db)
+        try:
+            thread = await svc_conv.create_thread(
+                publication=publication,
+                consumer_tenant_id=publication.tenant_id,  # 服务方视角
+                initiator_agent_id=initiator_agent_id,
+                title=f"Docs 测试 -> {publication.title}",
+                metadata={"source": "docs-test-panel"},
+                actor_id="platform:docs-test",
+            )
+            await db.flush()
+
+            # 发送第一条消息
+            task_id = None
+            if message.strip():
+                from app.schemas.service import ServiceThreadMessageCreateRequest
+                from app.services.context_service import ContextService
+
+                # 创建 consumer context
+                consumer_tenant_id = publication.tenant_id
+                context = await ContextService(db).create(
+                    tenant_id=consumer_tenant_id,
+                    source_channel="docs-test",
+                    source_conversation_id=f"docs-test-{uuid.uuid4().hex[:12]}",
+                    title=f"Docs 测试 -> {publication.title}",
+                    metadata={"source": "docs-test-panel", "service_id": service_id, "thread_id": thread.thread_id},
+                    actor_id="platform:docs-test",
+                )
+                await db.flush()
+
+                _, task_id = await svc_conv.send_consumer_message(
+                    thread=thread,
+                    tenant={"tenant_id": consumer_tenant_id, "sub": "platform:docs-test", "agent_id": initiator_agent_id},
+                    text=message.strip(),
+                    initiator_agent_id=initiator_agent_id,
+                    metadata={"source": "docs-test-panel"},
+                )
+                await db.commit()
+        except ServiceConversationError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+    return ApiResponse.ok({
+        "service_id": service_id,
+        "thread_id": thread.thread_id,
+        "task_id": task_id,
+        "handler_agent_id": publication.handler_agent_id,
+        "title": publication.title,
+    })
+
+
+@router.get("/v1/docs-test/services/{service_id}/threads", response_model=ApiResponse[list[dict]], include_in_schema=False)
+async def docs_test_list_service_threads(service_id: str):
+    """列出服务的所有会话线程（用于 docs 测试面板）。"""
+    _ensure_docs_test_enabled()
+    async with AsyncSessionLocal() as db:
+        svc_dir = ServiceDirectoryService(db)
+        publication = await svc_dir.get_accessible(service_id, None)
+        if not publication:
+            raise HTTPException(status_code=404, detail="服务不存在")
+
+        svc_conv = ServiceConversationService(db)
+        threads = await svc_conv.list_threads(publication.tenant_id, service_id=service_id)
+
+    return ApiResponse.ok([{
+        "thread_id": t.thread_id,
+        "service_id": t.service_id,
+        "title": t.title,
+        "status": t.status,
+        "consumer_tenant_id": t.consumer_tenant_id,
+        "created_at": str(t.created_at) if t.created_at else None,
+        "updated_at": str(t.updated_at) if t.updated_at else None,
+    } for t in threads])
+
+
+@router.get("/v1/docs-test/token", response_model=ApiResponse[dict], include_in_schema=False)
+async def docs_test_token(tenant_id: str):
+    """为指定 tenant 生成测试 JWT token（仅供 /docs/services 测试面板使用）。"""
+    _ensure_docs_test_enabled()
+    from app.core.security import create_access_token
+    token = create_access_token(
+        subject=f"docs-test:{tenant_id}",
+        extra={"tenant_id": tenant_id, "token_type": "docs-test"},
+    )
+    return ApiResponse.ok({"token": token, "tenant_id": tenant_id})
+
+
+@router.get("/v1/docs-test/threads/{thread_id}/messages", response_model=ApiResponse[list[dict]], include_in_schema=False)
+async def docs_test_list_thread_messages(thread_id: str, tenant_id: str):
+    """列出 thread 的所有消息（用于 docs 测试面板）。"""
+    _ensure_docs_test_enabled()
+    async with AsyncSessionLocal() as db:
+        svc_conv = ServiceConversationService(db)
+        thread = await svc_conv.get_thread(thread_id, tenant_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="thread 不存在")
+
+        await svc_conv.sync_assistant_messages(thread)
+        messages = await svc_conv.list_messages(thread, tenant_id)
+
+    return ApiResponse.ok([{
+        "message_id": m.message_id,
+        "thread_id": m.thread_id,
+        "role": m.role,
+        "content_text": m.content_text,
+        "created_at": str(m.created_at) if m.created_at else None,
+    } for m in messages])

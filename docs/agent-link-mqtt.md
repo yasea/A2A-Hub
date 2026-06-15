@@ -74,103 +74,53 @@ http://<host>:1880/agent-link/prompt
    - 将请求交给本地 agent 处理
    - 主动通过 IM 渠道（telegram 等）通知主人，包含好友摘要和审批命令
 
-推荐安装命令：
+## Agent Link 接入（插件安装）
+
+### 方式一：发给 agent 执行（推荐）
 
 ```bash
-AGENT_ID=<从 session_status.sessionKey 解析出的本机短 id> \
-CONNECT_URL="http://<host>:1880/agent-link/connect" \
-curl -fsSL "http://<host>:1880/agent-link/install/openclaw-aimoo-link.sh" | bash
+openclaw agent --agent <agent-id> -m "请安装 A2A Hub 的 aimoo-link 插件：curl -fsSL 'https://test.aihub.com/agent-link/install/openclaw-aimoo-link.sh' | bash"
 ```
 
-无法取得 `session_status` 时可省略 `AGENT_ID`，由安装脚本按 CWD、配置和文件系统信号自动识别。
+**说明：** 不指定 `--agent` 时使用默认 agent；已在线的 agent 会自动跳过重启。
+
+### 方式二：手动执行
+
+```bash
+curl -fsSL 'https://test.aihub.com/agent-link/install/openclaw-aimoo-link.sh' | bash
+```
+
+### 方式三：带参数安装
+
+```bash
+AGENT_ID=<agent-id> curl -fsSL 'https://test.aihub.com/agent-link/install/openclaw-aimoo-link.sh' | bash
+```
+
+### 方式四：全新安装（清理旧配置）
+
+```bash
+FORCE_CLEAN=true AGENT_ID=<agent-id> curl -fsSL 'https://test.aihub.com/agent-link/install/openclaw-aimoo-link.sh' | bash
+```
 
 说明：
+- `connect-url` 已内置到插件中，无需显式传入
+- `AGENT_ID` 可传短 id（如 `mia`）或完整 id（如 `openclaw:mia`）
+- `FORCE_CLEAN=true` 全新安装，清理旧的插件配置和状态
+- 已在线的 agent 会跳过 Gateway 重启，无需重复审批
 
-- agent 优先用 `session_status.sessionKey` 自证本机短 agent id
-- 安装脚本会校验 sessionKey 中的 id 是否存在于本机 OpenClaw 环境
-- `AGENT_ID` 可传短 id，也可传 `openclaw:<id>`
-- 正式安装产物只写 `connectUrl`
-- `connectUrlFile` 仅用于本地开发热切换
-- `runtime_identity_key` 由插件生成并保存在 `~/.openclaw/channels/aimoo/<agent>/runtime-identity-key`
+## Agent ID 自动识别
 
-## Agent ID 自动识别算法
+安装脚本在未显式传入 `AGENT_ID` 时，按以下优先级推断本机短 agent id：
 
-安装脚本在未显式传入 `AGENT_ID` 时，通过“强证据优先 + 评分兜底”的方式推断本机短 agent id。
+1. **显式输入**：`AGENT_ID` 或 `OPENCLAW_AGENT_ID` 环境变量（最高优先级）
+2. **当前会话信号**：从 `session_status.sessionKey`（如 `agent:mia:main`）解析第二段
+3. **执行上下文**：从当前工作目录（`workspace/<id>` 或 `workspace-<id>`）推断
+4. **配置和文件系统**：扫描 `openclaw.json` 的 `agents.list` 和 `channels.aimoo.instances`
 
-### 阶段 0：显式输入
-
-如果设置了 `AGENT_ID` 或 `OPENCLAW_AGENT_ID`，脚本直接使用该值，并把 `openclaw:<id>` 规范化成本机短 id。这是最高优先级，适合主人或 agent 已经确认身份的场景。
-
-### 阶段 1：当前会话信号
-
-推荐 agent 先调用 `session_status`，读取当前会话 `sessionKey`：
-
-```text
-agent:mia:main
-agent:mia:telegram:mia:direct:1738087556
-```
-
-`sessionKey` 的第二段就是 OpenClaw 本机短 agent id。安装脚本支持从 `OPENCLAW_SESSION_KEY` / `SESSION_KEY` / `SESSION_STATUS_JSON` 中解析该值，并要求解析出的 id 至少存在于以下任一位置：
-
-- `~/.openclaw/openclaw.json` 的 `agents.list`
-- `~/.openclaw/agents/<id>`
-- `~/.openclaw/workspace/<id>` 或 `~/.openclaw/workspace-<id>`
-
-该信号来自当前 live 会话，比 `default:true`、历史 `sessions.json` mtime 更接近真实执行主体。
-
-### 阶段 2：执行上下文信号
-
-当 agent 在自己的 workspace 中运行安装脚本时，进程当前目录直接暴露身份：
-
-```javascript
-cwd.match(/\/workspace-([^/]+)/)   →  agent 短 id 为 {name}
-cwd.match(/\/workspace\/([^/]+)/)  →  agent 短 id 为 {name}
-cwd.endsWith("/workspace")         →  agent 短 id 为 "main"
-```
-
-### 阶段 3：配置和文件系统评分
-
-只有前两类强信号缺失时，脚本才进入评分兜底：
-
-| 信号来源 | 权重 |
-|----------|:----:|
-| `channels.aimoo.instances[].localAgentId` | 30 |
-| `channels.aimoo.instances[].agentId` | 25 |
-| `channels.aimoo.instances[].userProfileFile` 指向 workspace | 25 |
-| `openclaw.json` agents.list 条目 | 5 |
-| 条目含 `workspace` 字段 | +2 |
-| 条目含 `name` 字段 | +1 |
-| `workspace/{name}/USER.md` 或 `SOUL.md` | 5 |
-| `workspace-{name}/USER.md` 或 `SOUL.md` | 2 |
-| 文件内容中的 agent_id 声明 | +3 |
-| `sessions.json` mtime < 1 小时 | +10 |
-| `sessions.json` mtime < 6 小时 | +7 |
-| `sessions.json` mtime < 24 小时 | +5 |
-| `sessions.json` mtime < 7 天 | +2 |
-| `agents/{id}/agent/` 目录存在 | +2 |
-
-`default:true` 不参与主评分，只在候选同分且没有更强证据时作为最后 tie-breaker。
-
-### 阶段 4：决策
-
-```text
-1. 显式 AGENT_ID / OPENCLAW_AGENT_ID             → 直接使用
-2. 当前 session_status.sessionKey 且本地存在     → 直接使用
-3. CWD 命中 workspace                            → 强候选
-4. 配置和文件系统评分出现明显领先候选            → 选取领先者
-5. 评分接近时优先最近活跃 sessions.json          → tie-breaker
-6. 仍同分且 default:true 参与同分                 → 选取 default
-7. 无任何候选                                    → 失败并提示显式传 AGENT_ID
-8. 仍无法明显区分但存在候选                       → 回退到最高分候选
-```
-
-### 设计原则
-
-- **当前会话优先**：`session_status.sessionKey` 是 agent 自己的 live 身份，优先级高于默认配置和历史活跃度
-- **强弱信号分层**：身份信号（显式输入、当前会话、workspace）优先；偏好信号（default、mtime）只用于兜底
-- **本地存在性校验**：从 sessionKey 解析出的 id 必须能在本机 OpenClaw 环境中找到，避免错误文本污染
-- **优雅降级**：旧版 OpenClaw 或普通 shell 场景无法提供 `session_status` 时，自动回退到 CWD、配置和文件系统信号
-- **无候选不猜**：没有任何候选时失败并提示 `AGENT_ID=<本机OpenClaw短agent id>`
+**设计原则**：
+- 当前会话优先：`session_status.sessionKey` 是 agent 自己的 live 身份
+- 本地存在性校验：解析出的 id 必须能在本机 OpenClaw 环境中找到
+- 无候选不猜：没有任何候选时失败并提示显式传 `AGENT_ID`
 
 ## 本地结果检查
 
@@ -267,15 +217,6 @@ env PYTHONPATH="$PWD/backend" backend/.venv/bin/python -m unittest discover -s t
 
 远程联调脚本：
 
-- `tests/remote_01_health.py`
-- `tests/remote_02_agent_link_prepare.py`
-- `tests/remote_03_platform_to_agent.py`
-- `tests/remote_04_agent_to_agent.py`
-- `tests/remote_05_public_self_register.py`
-- `tests/remote_06_service_conversation.py`
-
-正式集成脚本：
-
 - `tests/integration/agent_friends_flow.sh`
 - `tests/integration/service_thread_flow.sh`
 - `tests/integration/openclaw_owner_friend_cli_flow.sh`
@@ -283,4 +224,4 @@ env PYTHONPATH="$PWD/backend" backend/.venv/bin/python -m unittest discover -s t
 重置脚本：
 
 - `tests/reset_server_agent_link_state.sh`
-- `tests/reset_client_agent_link_state.sh`
+- `tests/reset_agent_link.sh`

@@ -98,8 +98,16 @@ class AgentLinkCoreRuntime {
   }
 
   readConnectUrl() {
-    if (this.config.connectUrl) return this.config.connectUrl.trim();
-    return fs.readFileSync(this.config.connectUrlFile, "utf8").trim();
+    // 如果 config 有 connectUrl（包含默认值），直接使用
+    if (this.config.connectUrl && this.config.connectUrl.trim()) {
+      return this.config.connectUrl.trim();
+    }
+    // 否则尝试从文件读取
+    try {
+      return fs.readFileSync(this.config.connectUrlFile, "utf8").trim();
+    } catch {
+      return "";
+    }
   }
 
   watchConnectUrlFile() {
@@ -152,6 +160,7 @@ class AgentLinkCoreRuntime {
         reason,
         updatedAt: nowIso(),
         localAgentId: this.resolveLocalAgentId(),
+        authToken: this.currentBootstrap.authToken,
         bootstrap: {
           agentId: this.currentBootstrap.agentId,
           tenantId: this.currentBootstrap.tenantId,
