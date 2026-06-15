@@ -347,13 +347,16 @@ async def docs_test_delete_services(status: str = "INACTIVE", tenant_id: str | N
         publications = result.scalars().all()
         deleted = 0
         for pub in publications:
-            # 先删除关联的 service_threads
+            # 先删除关联的 service_threads（CASCADE 会自动删除 thread_messages）
             threads_result = await db.execute(
                 select(ServiceThread).where(ServiceThread.service_id == pub.service_id)
             )
             threads = threads_result.scalars().all()
             for thread in threads:
                 await db.delete(thread)
+            # flush 确保 thread 删除操作提交到数据库
+            await db.flush()
+            # 再删除服务
             await db.delete(pub)
             deleted += 1
         await db.commit()
